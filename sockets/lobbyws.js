@@ -1,6 +1,9 @@
 function join(io, socket, redisClient) {
     socket.on('join', async (data) => {
         let lobbyID = data.lobbyID;
+        if(lobbyID === undefined){
+            return;
+        }
         socket.join(lobbyID);
 
         let mmr = data.mmr;
