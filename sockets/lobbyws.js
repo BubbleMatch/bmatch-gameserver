@@ -1,16 +1,18 @@
 function join(io, socket, redisClient) {
     socket.on('join', async (data) => {
         let lobbyID = data.lobbyID;
-        if(lobbyID === undefined){
+        if (lobbyID === undefined) {
             return;
         }
         socket.join(lobbyID);
 
         let mmr = data.mmr;
         let username = data.username;
-        let type = data.type;
+        let type =  lobbyID.startsWith(username) ? "Admin" : data.type;
 
-        await redisClient.hSet(`Socket:${socket.id}`, "lobbyID", lobbyID);
+        if (type !== "Bot") {
+            await redisClient.hSet(`Socket:${socket.id}`, "lobbyID", lobbyID);
+        }
 
         let lobbyData = await redisClient.hGetAll(`Lobby:${lobbyID}`);
         let players = lobbyData && lobbyData.Players ? JSON.parse(lobbyData.Players) : [];
@@ -18,9 +20,12 @@ function join(io, socket, redisClient) {
         const existingPlayerIndex = players.findIndex(player => player.username === username);
 
         if (existingPlayerIndex > -1) {
+            let oldId = players[existingPlayerIndex].id;
+            io.to(oldId).emit("userExist");
+            await redisClient.del(`Socket:${oldId}`);
             players[existingPlayerIndex].id = socket.id;
         } else {
-            players.push({ id: socket.id, mmr: mmr, username: username, type: type });
+            players.push({id: socket.id, mmr: mmr, username: username, type: type});
         }
 
         await redisClient.hSet(`Lobby:${lobbyID}`, "Players", JSON.stringify(players));
@@ -30,29 +35,31 @@ function join(io, socket, redisClient) {
 
 function disconnect(io, socket, redisClient) {
     socket.on('disconnect', async () => {
+        try {
+            const lobbyID = await redisClient.hGet(`Socket:${socket.id}`, "lobbyID");
+            if (!lobbyID) return;
 
-        const lobbyID = await redisClient.hGet(`Socket:${socket.id}`, "lobbyID");
-
-        if (lobbyID) {
             const lobbyKey = `Lobby:${lobbyID}`;
+            let lobbyData = await redisClient.hGetAll(lobbyKey);
+            let players = lobbyData && lobbyData.Players ? JSON.parse(lobbyData.Players) : [];
 
-            try {
-                let lobbyData = await redisClient.hGetAll(lobbyKey);
-                let players = lobbyData && lobbyData.Players ? JSON.parse(lobbyData.Players) : [];
+            players = players.filter(player => player.id !== socket.id);
 
-                players = players.filter(player => player.id !== socket.id);
+            const hasPlayers = players.length > 0;
+            const hasNoRealPlayersOrAdmin = players.every(player => player.type !== "Player" || player.type !== "Admin");
+            const hasNoAdmin = players.every(player => player.type !== "Admin");
 
-                if (players.length === 0) {
-                    await redisClient.del(lobbyKey);
-                } else {
-                    await redisClient.hSet(lobbyKey, 'Players', JSON.stringify(players));
-                    io.to(lobbyID).emit('playerList', await redisClient.hGetAll(lobbyKey));
-                }
-
-                await redisClient.del(`Socket:${socket.id}`);
-            } catch (err) {
-                console.error('Error handling disconnect:', err);
+            if (!hasPlayers || !hasNoRealPlayersOrAdmin || hasNoAdmin) {
+                io.to(lobbyID).emit('lobbyRemoved', await redisClient.hGetAll(lobbyKey));
+                await redisClient.del(lobbyKey);
+            } else {
+                await redisClient.hSet(lobbyKey, 'Players', JSON.stringify(players));
+                io.to(lobbyID).emit('playerList', await redisClient.hGetAll(lobbyKey));
             }
+
+            await redisClient.del(`Socket:${socket.id}`);
+        } catch (err) {
+            console.error('Error handling disconnect:', err);
         }
     });
 }
