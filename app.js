@@ -4,9 +4,8 @@ const http = require('http');
 const cors = require("cors");
 const Consul = require('consul');
 const { Server } = require("socket.io");
-const { disconnect, join } = require("./sockets/lobbyws");
-const dbModule = require('./postgresql/user');
-const { consulHost, consulPort, getPostgresConfig, getRedisConfig } = require("./config/config");
+const { disconnect, join, generateGame } = require("./sockets/lobbyws");
+const { consulHost, consulPort, getRedisConfig } = require("./config/config");
 
 const app = express();
 const server = http.createServer(app);
@@ -28,11 +27,6 @@ const initializeServices = async () => {
     await redisClient.connect();
 
     redisClient.on('error', err => console.log('Redis Client Error', err));
-
-    const config = await getPostgresConfig(consul);
-    const userIdToFind = 4;
-    const user = await dbModule.fetchUserById(userIdToFind, config);
-    console.log(user);
 }
 
 initializeServices().catch(err => {
@@ -53,6 +47,7 @@ const io = new Server(server, {
 io.on('connection', socket => {
     join(io, socket, redisClient);
     disconnect(io, socket, redisClient);
+    generateGame(io, socket, redisClient, consul);
 });
 
 app.use(express.json());
