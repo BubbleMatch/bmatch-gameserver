@@ -3,16 +3,17 @@ const redis = require('redis');
 const http = require('http');
 const cors = require("cors");
 const Consul = require('consul');
-const { Server } = require("socket.io");
-const { disconnect, join, generateGame } = require("./sockets/lobbyws");
-const { consulHost, consulPort, getRedisConfig } = require("./config/config");
+const {Server} = require("socket.io");
+const {
+    disconnect, join, generateGame, verifyLobby
+} = require("./sockets/lobbyws");
+const {consulHost, consulPort, getRedisConfig} = require("./config/config");
 
 const app = express();
 const server = http.createServer(app);
 
 const consul = new Consul({
-    host: consulHost,
-    port: consulPort
+    host: consulHost, port: consulPort
 });
 
 let redisClient;
@@ -48,10 +49,11 @@ io.on('connection', socket => {
     join(io, socket, redisClient);
     disconnect(io, socket, redisClient);
     generateGame(io, socket, redisClient, consul);
+    verifyLobby(io, socket, redisClient, consul);
 });
 
 app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({extended: false}));
 app.use(cors({
     origin: '*'
 }));
