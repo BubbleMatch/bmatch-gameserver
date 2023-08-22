@@ -1,7 +1,8 @@
 const {verify} = require("jsonwebtoken");
 const {JWTToken, getPostgresConfig} = require("../config/config");
-const {fetchUserById} = require("../postgresql/user");
+const {fetchUserById} = require("../utils/getPostgresqlUserData");
 const {v4: uuidv4} = require('uuid');
+const {generateArea} = require('../gameLogic/areaGenerator')
 
 function join(io, socket, redisClient) {
     socket.on('join', async (data) => {
@@ -85,8 +86,9 @@ function verifyLobby(io, socket, redisClient, consul) {
 
             const lobbyID = await redisClient.hGet(`Socket:${socket.id}`, "lobbyID");
             if (!lobbyID) return;
+            const lobbyKey = `Lobby:${lobbyID}`;
 
-            let lobbyData = await redisClient.hGetAll(`Lobby:${lobbyID}`);
+            let lobbyData = await redisClient.hGetAll(lobbyKey);
             let playersInLobby = lobbyData && lobbyData.Players ? JSON.parse(lobbyData.Players) : [];
             const gameUUID = lobbyData.UUID ? JSON.parse(lobbyData.UUID).uuid : null;
 
@@ -107,26 +109,36 @@ function verifyLobby(io, socket, redisClient, consul) {
             currentReadyPlayers++;
 
             await redisClient.hSet(`Lobby:${lobbyID}`, 'UUID', JSON.stringify({
-                ...JSON.parse(lobbyData.UUID),
-                readyPlayers: currentReadyPlayers
+                ...JSON.parse(lobbyData.UUID), readyPlayers: currentReadyPlayers
             }));
 
             let updatedPlayersInLobby = playersInLobby.map(player => {
                 if (player.username === userFromDb.username) {
-                    return { ...player, ready: true };
+                    return {...player, ready: true};
                 }
                 return player;
             });
 
-            io.to(lobbyID).emit('playerList', {Players:  JSON.stringify(updatedPlayersInLobby)});
+            io.to(lobbyID).emit('playerList', {Players: JSON.stringify(updatedPlayersInLobby)});
 
             if (currentReadyPlayers === JSON.parse(lobbyData.UUID).players) {
 
-                const systemMessageData = JSON.stringify({
-                    message: `Game ready with UUID: ${gameUUID}`
+                await redisClient.hSet(`Game:${gameUUID}`, "LobbyData", JSON.stringify({
+                    players: JSON.parse(lobbyData.UUID).players, bots: JSON.parse(lobbyData.UUID).bots, ready: 0
+                }));
+
+                await redisClient.hSet(`Game:${gameUUID}`, "GameArea", JSON.stringify(generateArea()));
+
+                await redisClient.del(lobbyKey);
+
+                // save to cookies
+                // not able to create a new lobby
+
+                const uuidMessage = JSON.stringify({
+                    message: `${gameUUID}`
                 });
 
-                io.to(lobbyID).emit("systemMessage", systemMessageData);
+                io.to(lobbyID).emit("gameUUID", uuidMessage);
             }
         } catch (ex) {
             let errorData = JSON.stringify({
