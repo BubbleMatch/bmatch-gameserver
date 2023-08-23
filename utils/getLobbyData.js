@@ -1,12 +1,27 @@
-const {getPostgresConfig} = require("../config/config");
+const {getPostgresConfig, JWTToken} = require("../config/config");
 const {fetchUserById} = require("./getPostgresqlUserData");
 const {verify} = require("jsonwebtoken");
 
-async function extractAndVerifyJWT(jwt, JWTToken, consul) {
+async function extractAndVerifyJWT(jwt, consul, redisClient) {
     const verifyPlayer = verify(jwt, JWTToken);
-    const cfg = await getPostgresConfig(consul);
-    return await fetchUserById(verifyPlayer.sub, cfg);
+    const userId = verifyPlayer.sub;
+
+    const userProfileKey = `user_profile:${userId}`;
+
+    let userProfile = await redisClient.get(userProfileKey);
+
+    if (userProfile) {
+        userProfile = JSON.parse(userProfile);
+    } else {
+        const cfg = await getPostgresConfig(consul);
+        userProfile = await fetchUserById(userId, cfg);
+
+        await redisClient.set(userProfileKey, JSON.stringify(userProfile), 'EX', 3600);
+    }
+
+    return userProfile;
 }
+
 
 async function fetchLobbyDataAndPlayers(redisClient, lobbyID) {
     const lobbyData = await redisClient.hGetAll(`Lobby:${lobbyID}`);
@@ -22,6 +37,7 @@ async function emitPlayerListToLobby(io, redisClient, lobbyID) {
 
 function emitSystemMessage(io, socket, message) {
     const data = JSON.stringify({ message });
+    console.log(data);
     io.to(socket.id).emit("systemMessage", data);
 }
 

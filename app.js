@@ -55,7 +55,7 @@ const io = new Server(server, {
 });
 
 io.on('connection', socket => {
-    join(io, socket, redisClient);
+    join(io, socket, consul, redisClient);
     disconnect(io, socket, redisClient);
     generateGame(io, socket, redisClient, consul);
     verifyLobby(io, socket, redisClient, consul);

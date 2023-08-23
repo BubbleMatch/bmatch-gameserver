@@ -3,17 +3,27 @@ const {JWTToken, getPostgresConfig} = require("../config/config");
 const {fetchUserById} = require("../utils/getPostgresqlUserData");
 const {v4: uuidv4} = require('uuid');
 const {generateArea} = require('../gameLogic/areaGenerator')
+const {extractAndVerifyJWT, emitSystemMessage} = require("../utils/getLobbyData");
 
-function join(io, socket, redisClient) {
+function join(io, socket, consul, redisClient) {
     socket.on('join', async (data) => {
         let lobbyID = data.lobbyID;
         if (lobbyID === undefined) {
             return;
         }
+
+        try {
+            let idk = await extractAndVerifyJWT(data.token, consul, redisClient);
+
+            console.log(idk);
+
+        } catch (ex) {
+            emitSystemMessage(io, socket, ex.message);
+        }
+
         socket.join(lobbyID);
 
-        let mmr = data.mmr;
-        let username = data.username;
+        /*
         let type = lobbyID.startsWith(username) ? "Admin" : data.type;
 
         if (type !== "Bot") {
@@ -41,6 +51,8 @@ function join(io, socket, redisClient) {
 
         await redisClient.hSet(`Lobby:${lobbyID}`, "Players", JSON.stringify(players));
         io.to(lobbyID).emit('playerList', await redisClient.hGetAll(`Lobby:${lobbyID}`));
+
+         */
     });
 }
 
