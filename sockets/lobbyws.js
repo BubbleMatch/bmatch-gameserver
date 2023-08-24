@@ -3,56 +3,78 @@ const {JWTToken, getPostgresConfig} = require("../config/config");
 const {fetchUserById} = require("../utils/getPostgresqlUserData");
 const {v4: uuidv4} = require('uuid');
 const {generateArea} = require('../gameLogic/areaGenerator')
-const {extractAndVerifyJWT, emitSystemMessage} = require("../utils/getLobbyData");
+const {
+    extractAndVerifyJWT,
+    emitSystemMessage,
+    fetchLobbyDataAndPlayers,
+    emitPlayerListToLobby,
+    checkLobbyProperties,
+    setLobbyPlayersData,
+    setUserSocket
+} = require("../utils/getLobbyData");
 
 function join(io, socket, consul, redisClient) {
     socket.on('join', async (data) => {
         let lobbyID = data.lobbyID;
+
         if (lobbyID === undefined) {
             return;
         }
 
+        socket.join(lobbyID);
+
         try {
-            let idk = await extractAndVerifyJWT(data.token, consul, redisClient);
+            let lobbyData = await fetchLobbyDataAndPlayers(redisClient, lobbyID);
 
-            console.log(idk);
+            if (lobbyData.players.length === 4) {
+                await emitPlayerListToLobby(io, redisClient, lobbyID);
+                return;
+            }
 
+            if (data.type === "Bot") {
+                if (lobbyData.players !== 4) {
+                    let lobbyProperties = checkLobbyProperties(lobbyData.players);
+                    let botId = lobbyProperties.bots.length;
+
+                    lobbyData.players.push({id: botId++, mmr: 0, username: `Bot${botId++}`, type: "Bot"})
+
+                    await setLobbyPlayersData(redisClient, lobbyID, lobbyData.players)
+                    await emitPlayerListToLobby(io, redisClient, lobbyID);
+                    return;
+                }
+            }
+
+            let currentUser = await extractAndVerifyJWT(data.token, consul, redisClient);
+
+            if (!currentUser.id) {
+                throw new Error("Not able to parse user-id");
+            }
+
+            const existingPlayerIndex = lobbyData.players.findIndex(player => player.id === currentUser.id);
+
+            if (existingPlayerIndex === -1) {
+                let playerType = lobbyID.startsWith(currentUser.username) ? "Admin" : "Player";
+
+                lobbyData.players.push({
+                    id: currentUser.id,
+                    mmr: currentUser.mmr,
+                    username: currentUser.username,
+                    type: playerType,
+                    ws: socket.id
+                });
+            } else {
+                let oldWebsocketId = lobbyData.players[existingPlayerIndex].ws;
+                io.to(oldWebsocketId).emit("userExist");
+                await redisClient.del(`Socket:${oldWebsocketId}`);
+                lobbyData.players[existingPlayerIndex].ws = socket.id;
+            }
+
+            await setLobbyPlayersData(redisClient, lobbyID, lobbyData.players)
+            await setUserSocket(redisClient, socket.id, lobbyID)
+            await emitPlayerListToLobby(io, redisClient, lobbyID);
         } catch (ex) {
             emitSystemMessage(io, socket, ex.message);
         }
-
-        socket.join(lobbyID);
-
-        /*
-        let type = lobbyID.startsWith(username) ? "Admin" : data.type;
-
-        if (type !== "Bot") {
-            await redisClient.hSet(`Socket:${socket.id}`, "lobbyID", lobbyID);
-        }
-
-        let lobbyData = await redisClient.hGetAll(`Lobby:${lobbyID}`);
-        let players = lobbyData && lobbyData.Players ? JSON.parse(lobbyData.Players) : [];
-
-        const existingPlayerIndex = players.findIndex(player => player.username === username);
-
-        if (existingPlayerIndex > -1) {
-            let oldId = players[existingPlayerIndex].id;
-            io.to(oldId).emit("userExist");
-            await redisClient.del(`Socket:${oldId}`);
-            players[existingPlayerIndex].id = socket.id;
-        } else {
-            if (players.length < 4) {
-                players.push({id: socket.id, mmr: mmr, username: username, type: type});
-            } else {
-                io.to(lobbyID).emit('playerList', await redisClient.hGetAll(`Lobby:${lobbyID}`));
-                return
-            }
-        }
-
-        await redisClient.hSet(`Lobby:${lobbyID}`, "Players", JSON.stringify(players));
-        io.to(lobbyID).emit('playerList', await redisClient.hGetAll(`Lobby:${lobbyID}`));
-
-         */
     });
 }
 
@@ -62,22 +84,18 @@ function disconnect(io, socket, redisClient) {
             const lobbyID = await redisClient.hGet(`Socket:${socket.id}`, "lobbyID");
             if (!lobbyID) return;
 
-            const lobbyKey = `Lobby:${lobbyID}`;
-            let lobbyData = await redisClient.hGetAll(lobbyKey);
-            let players = lobbyData && lobbyData.Players ? JSON.parse(lobbyData.Players) : [];
+            let lobbyKey = `Lobby:${lobbyID}`;
+            let lobbyData = await fetchLobbyDataAndPlayers(redisClient, lobbyID);
+            let excludeCurrentSocketId = lobbyData.players.filter(player => player.ws !== socket.id);
 
-            players = players.filter(player => player.id !== socket.id);
+            let lobbyProperties = checkLobbyProperties(excludeCurrentSocketId);
 
-            const hasPlayers = players.length > 0;
-            const hasNoRealPlayersOrAdmin = players.every(player => player.type !== "Player" || player.type !== "Admin");
-            const hasNoAdmin = players.every(player => player.type !== "Admin");
-
-            if (!hasPlayers || !hasNoRealPlayersOrAdmin || hasNoAdmin) {
+            if (!lobbyProperties.hasPlayers || !lobbyProperties.hasNoRealPlayersOrAdmin || lobbyProperties.hasNoAdmin) {
                 io.to(lobbyID).emit('lobbyRemoved');
                 await redisClient.del(lobbyKey);
             } else {
-                await redisClient.hSet(lobbyKey, 'Players', JSON.stringify(players));
-                io.to(lobbyID).emit('playerList', await redisClient.hGetAll(lobbyKey));
+                await setLobbyPlayersData(redisClient, lobbyID, excludeCurrentSocketId)
+                await emitPlayerListToLobby(io, redisClient, lobbyID);
             }
 
             await redisClient.del(`Socket:${socket.id}`);
@@ -88,6 +106,8 @@ function disconnect(io, socket, redisClient) {
 }
 
 function verifyLobby(io, socket, redisClient, consul) {
+
+    // TODO: Refactor
     socket.on('verifyLobby', async (data) => {
         let jwt = data.JWT;
 
@@ -162,6 +182,8 @@ function verifyLobby(io, socket, redisClient, consul) {
 }
 
 function generateGame(io, socket, redisClient, consul) {
+    // TODO: Refactor
+
     socket.on('generateGame', async (data) => {
         try {
             let lobbyID = data.lobbyID;
