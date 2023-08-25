@@ -163,7 +163,7 @@ function generateGame(io, socket, redisClient, consul) {
             }));
 
             await redisClient.hSet(`Game:${uuid}`, "LobbyData", JSON.stringify({
-                players: lobbyProperties.realPlayersOrAdminIds, bots: lobbyProperties.bots.length, readyPlayers: 0, lobbyId: lobbyId
+                players: lobbyProperties.realPlayersOrAdminIds, bots: lobbyProperties.bots, readyPlayers: 0, lobbyId: lobbyId
             }));
 
             await redisClient.hSet(`Game:${uuid}`, "GameArea", JSON.stringify(generateArea()));
