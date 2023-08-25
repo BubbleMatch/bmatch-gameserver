@@ -14,7 +14,6 @@ const {
     getLobbyFromWsSocket,
     getLobbyUUID
 } = require("../utils/getLobbyData");
-const {json} = require("express");
 
 function join(io, socket, consul, redisClient) {
     socket.on('join', async (data) => {
@@ -91,7 +90,7 @@ function join(io, socket, consul, redisClient) {
     });
 }
 
-function disconnect(io, socket, redisClient) {
+function disconnectLobby(io, socket, redisClient) {
     socket.on('disconnect', async () => {
         try {
             let lobbyId = await getLobbyFromWsSocket(socket.id, redisClient);
@@ -164,7 +163,7 @@ function generateGame(io, socket, redisClient, consul) {
             }));
 
             await redisClient.hSet(`Game:${uuid}`, "LobbyData", JSON.stringify({
-                players: lobbyProperties.realPlayersOrAdminIds, bots: lobbyProperties.bots.length, readyPlayers: 0
+                players: lobbyProperties.realPlayersOrAdminIds, bots: lobbyProperties.bots.length, readyPlayers: 0, lobbyId: lobbyId
             }));
 
             await redisClient.hSet(`Game:${uuid}`, "GameArea", JSON.stringify(generateArea()));
@@ -185,4 +184,4 @@ function generateGame(io, socket, redisClient, consul) {
     });
 }
 
-module.exports = {join, disconnect, generateGame}
+module.exports = {joinLobby: join, disconnectLobby, generateGame}
