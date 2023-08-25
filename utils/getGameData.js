@@ -20,7 +20,7 @@ const getUserFromRedisByUserId = async (redisClient, consul, userId) => {
     return userProfile;
 };
 
-async function getGamePlayers(io, redisClient, consul, gameUUID) {
+async function getGamePlayers(redisClient, consul, gameUUID) {
     let gameData = await getLobbyData(redisClient, gameUUID)
     let gamePlayers = [];
 
@@ -67,7 +67,7 @@ async function incrementReadyPlayers(redisClient, uuid) {
 
     const lobbyData = JSON.parse(lobbyDataRaw);
 
-    if (typeof lobbyData.readyPlayers === 'number' && lobbyData.players.length < lobbyData.readyPlayers) {
+    if (typeof lobbyData.readyPlayers === 'number' && lobbyData.readyPlayers < lobbyData.players.length) {
         lobbyData.readyPlayers++;
     }
 
@@ -75,6 +75,16 @@ async function incrementReadyPlayers(redisClient, uuid) {
 
     return lobbyData;
 }
+
+async function getReadyPlayers(redisClient, uuid) {
+    const lobbyDataRaw = await redisClient.hGet(`Game:${uuid}`, "LobbyData");
+    if (!lobbyDataRaw) return null;
+
+    const lobbyData = JSON.parse(lobbyDataRaw);
+
+    return lobbyData.readyPlayers;
+}
+
 
 async function getCurrentGamePlayer(redisClient, uuid) {
     const currentPlayerRaw = await redisClient.hGet(`Game:${uuid}`, "CurrentPlayer");
@@ -87,6 +97,34 @@ async function setCurrentGamePlayer(redisClient, uuid, currentPlayer) {
     await redisClient.hSet(`Game:${uuid}`, "CurrentPlayer", JSON.stringify(currentPlayer));
 }
 
+async function getActionPointer(redisClient, uuid) {
+    const actionPointerRaw = await redisClient.hGet(`Game:${uuid}`, `LastActionId`,);
+
+    if (!actionPointerRaw) return null;
+    return JSON.parse(actionPointerRaw);
+}
+
+async function setActionPointer(redisClient, uuid, actionPointerId) {
+    await redisClient.hSet(`Game:${uuid}`, `LastActionId`, actionPointerId);
+}
+
+async function setAction(redisClient, uuid, actionId, action) {
+    await redisClient.hSet(`Game:${uuid}`, `Action:${actionId}`, JSON.stringify(action));
+}
+
+async function getAction(redisClient, uuid, actionId) {
+    const lastActionDataRaw = await redisClient.hGet(`Game:${uuid}`, `Action:${actionId}`);
+
+    if (!lastActionDataRaw) return null;
+    return JSON.parse(lastActionDataRaw);
+}
+
+async function getGameArea(redisClient, uuid) {
+    const gameArea = await redisClient.hGet(`Game:${uuid}`, `GameArea`);
+
+    if (!gameArea) return null;
+    return JSON.parse(gameArea);
+}
 
 module.exports = {
     getGamePlayers,
@@ -95,5 +133,12 @@ module.exports = {
     getLobbyData,
     incrementReadyPlayers,
     getCurrentGamePlayer,
-    setCurrentGamePlayer
+    setCurrentGamePlayer,
+    getReadyPlayers,
+    setAction,
+    getAction,
+    getActionPointer,
+    getUserFromRedisByUserId,
+    setActionPointer,
+    getGameArea
 }

@@ -1,6 +1,6 @@
 const https = require('https');
 const { Server } = require("socket.io");
-const {joinServer, disconnectServer} = require("../sockets/gamews");
+const {joinServer, disconnectServer, openedBubble} = require("../sockets/gamews");
 
 function startGameServer(app, options, consul, redisClient) {
     const server = https.createServer(options, app);
@@ -13,6 +13,7 @@ function startGameServer(app, options, consul, redisClient) {
     io.on('connection', socket => {
         joinServer(io, socket, consul, redisClient);
         disconnectServer(io, socket, redisClient);
+        openedBubble(io, socket, consul, redisClient);
     });
 
     server.listen(8005, () => {
