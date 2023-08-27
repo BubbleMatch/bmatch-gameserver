@@ -1,6 +1,7 @@
 const {getPostgresConfig} = require("../config/config");
 const {fetchUserById} = require("./getPostgresqlUserData");
 const consul = require("consul");
+const {setNextPlayerId} = require("../gameLogic/queue");
 
 const getUserFromRedisByUserId = async (redisClient, consul, userId) => {
 
@@ -24,6 +25,7 @@ async function getGamePlayers(redisClient, consul, gameUUID) {
     let gameData = await getLobbyData(redisClient, gameUUID)
     let gamePlayers = [];
 
+    // todo: fix exception of null
     for (let id of gameData.players) {
         let userFromRedisByUserId = await getUserFromRedisByUserId(redisClient, consul, id);
 
@@ -126,6 +128,32 @@ async function getGameArea(redisClient, uuid) {
     return JSON.parse(gameArea);
 }
 
+async function getPaused(redisClient, uuid){
+    let isPausedRaw = await redisClient.hGet(`Game:${uuid}`, `GamePaused`);
+    return isPausedRaw === 'true';
+}
+
+async function setPaused(redisClient, uuid, flag){
+    await redisClient.hSet(`Game:${uuid}`, `GamePaused`, flag);
+}
+
+
+async function setNextPlayer(redisClient, consul, gameUUID, currentUserId){
+    let currentGamePlayers = await getGamePlayers(redisClient, consul, gameUUID);
+    let currentIndex = currentGamePlayers.findIndex(player => player.id === currentUserId);
+
+    let nextPlayerIndex = setNextPlayerId(currentIndex, currentGamePlayers);
+    let nextPlayer = currentGamePlayers[nextPlayerIndex];
+
+    await setPaused(redisClient, gameUUID, 'true');
+
+    await setCurrentGamePlayer(redisClient, gameUUID, nextPlayer);
+
+
+
+    return nextPlayer;
+}
+
 module.exports = {
     getGamePlayers,
     setUserJWT_UUID_Cache,
@@ -140,5 +168,8 @@ module.exports = {
     getActionPointer,
     getUserFromRedisByUserId,
     setActionPointer,
-    getGameArea
+    getGameArea,
+    getPaused,
+    setPaused,
+    setNextPlayer
 }

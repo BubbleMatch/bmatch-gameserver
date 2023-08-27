@@ -43,7 +43,7 @@ function join(io, socket, consul, redisClient) {
                     let lobbyProperties = checkLobbyProperties(lobbyData.players);
                     let botId = lobbyProperties.bots.length;
 
-                    lobbyData.players.push({id: botId++, mmr: 0, username: `Bot${botId++}`, type: "Bot"})
+                    lobbyData.players.push({id: botId++, mmr: 0, username: `Bot${botId++}`, type: "Bot", lastSuccessfulAttempt: 0})
 
                     await setLobbyPlayersData(redisClient, lobbyId, lobbyData.players)
                     await emitPlayerListToLobby(io, redisClient, lobbyId);
@@ -168,6 +168,7 @@ function generateGame(io, socket, redisClient, consul) {
 
             await redisClient.hSet(`Game:${uuid}`, "GameArea", JSON.stringify(generateArea()));
             await redisClient.hSet(`Game:${uuid}`, `LastActionId`, 0);
+            await redisClient.hSet(`Game:${uuid}`, `GamePaused`, 'true');
 
             io.to(lobbyId).emit("gameUUID", {
                 uuid: uuid

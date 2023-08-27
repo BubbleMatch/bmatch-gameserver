@@ -1,14 +1,12 @@
-let lastSuccessfulAttempt = 0;
 
-
-function pseudoRandomChoice(attemptsSinceLastSuccess) {
+function pseudoRandomChoice(attemptsSinceLastSuccess, lastSuccessfulAttempt) {
     const C = 0.05;
     const probability = C * (attemptsSinceLastSuccess + 1);
 
     const randomValue = Math.random();
 
     if (randomValue <= probability) {
-        lastSuccessfulAttempt = 0;
+        // if true level above set lastSuccessfulAttempt to 0
         return true;
     }
 
@@ -16,7 +14,7 @@ function pseudoRandomChoice(attemptsSinceLastSuccess) {
     return false;
 }
 
-function chooseCell(openedCells, allCells) {
+function chooseCell(openedCells, allCells, lastSuccessfulAttempt) {
     const availableCells = allCells.filter(cell => !openedCells.includes(cell));
 
     let attempts = 0;
