@@ -1,34 +1,45 @@
-
-function pseudoRandomChoice(attemptsSinceLastSuccess, lastSuccessfulAttempt) {
+function pseudoRandomChoice(lastSuccessfulAttempt) {
     const C = 0.05;
-    const probability = C * (attemptsSinceLastSuccess + 1);
+    const probability = C * (lastSuccessfulAttempt + 1);
 
     const randomValue = Math.random();
 
     if (randomValue <= probability) {
-        // if true level above set lastSuccessfulAttempt to 0
-        return true;
+        return [true, 0];
     }
 
-    lastSuccessfulAttempt++;
-    return false;
+    return [false, lastSuccessfulAttempt + 1];
 }
 
-function chooseCell(openedCells, allCells, lastSuccessfulAttempt) {
-    const availableCells = allCells.filter(cell => !openedCells.includes(cell));
+function chooseCell(openedCells, allCells, lastSuccessfulAttempt, knownBubbleValue = null, knownBubbleId = null) {
+    const availableCells = knownBubbleId ? allCells.filter(cell => !openedCells.includes(cell) && cell !== knownBubbleId) : allCells.filter(cell => !openedCells.includes(cell));
 
-    let attempts = 0;
+    const [shouldFindDuplicate, newLastSuccessfulAttempt] = pseudoRandomChoice(lastSuccessfulAttempt);
 
-    while (!pseudoRandomChoice(lastSuccessfulAttempt)) {
-        attempts++;
-        if (attempts > availableCells.length) {
-            break;
+    if (shouldFindDuplicate) {
+        if (knownBubbleValue) {
+            const duplicateIndex = availableCells.findIndex(cell => allCells[cell] === knownBubbleValue);
+            if (duplicateIndex !== -1) return [availableCells[duplicateIndex], newLastSuccessfulAttempt];
+        } else {
+            const duplicateCell = findDuplicate(availableCells, allCells, openedCells);
+            if (duplicateCell) return [duplicateCell, newLastSuccessfulAttempt];
         }
     }
 
-    return availableCells[Math.floor(Math.random() * availableCells.length)];
+    return [availableCells[Math.floor(Math.random() * availableCells.length)], newLastSuccessfulAttempt];
 }
 
+function findDuplicate(availableCells, allCells, openedCells) {
+    for (const cell of openedCells) {
+        const duplicateIndexes = allCells.reduce((acc, el, idx) => el === cell ? acc.concat(idx) : acc, []);
+        const availableDuplicates = duplicateIndexes.filter(idx => availableCells.includes(allCells[idx]));
+
+        if (availableDuplicates.length > 0) return allCells[availableDuplicates[0]];
+    }
+    return null;
+}
+
+
 module.exports = {
-    pseudoRandomChoice, chooseCell
+    chooseCell
 }

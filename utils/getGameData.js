@@ -128,28 +128,42 @@ async function getGameArea(redisClient, uuid) {
     return JSON.parse(gameArea);
 }
 
-async function getPaused(redisClient, uuid){
+async function getPaused(redisClient, uuid) {
     let isPausedRaw = await redisClient.hGet(`Game:${uuid}`, `GamePaused`);
     return isPausedRaw === 'true';
 }
 
-async function setPaused(redisClient, uuid, flag){
+async function setPaused(redisClient, uuid, flag) {
     await redisClient.hSet(`Game:${uuid}`, `GamePaused`, flag);
 }
 
+async function setBotLastSuccessfulAttempt(redisClient, gameUUID, botId, newValue) {
+    const lobbyData = await getLobbyData(redisClient, gameUUID);
 
-async function setNextPlayer(redisClient, consul, gameUUID, currentUserId){
+    const bot = lobbyData.bots.find(b => b.id === botId);
+    if (bot) {
+        bot.lastSuccessfulAttempt = newValue;
+    } else {
+        throw new Error(`Bot with ID ${botId} not found in the lobby.`);
+    }
+
+    await redisClient.hSet(`Game:${gameUUID}`, 'LobbyData', JSON.stringify(lobbyData));
+}
+
+async function setNextPlayer(redisClient, consul, gameUUID, currentUser) {
     let currentGamePlayers = await getGamePlayers(redisClient, consul, gameUUID);
-    let currentIndex = currentGamePlayers.findIndex(player => player.id === currentUserId);
+
+    let currentIndex;
+    if (currentUser.type === "Bot") {
+        currentIndex = currentGamePlayers.findIndex(bot => bot.username === currentUser.username);
+    } else {
+        currentIndex = currentGamePlayers.findIndex(player => player.id == currentUser.UserId);
+    }
 
     let nextPlayerIndex = setNextPlayerId(currentIndex, currentGamePlayers);
     let nextPlayer = currentGamePlayers[nextPlayerIndex];
 
-    await setPaused(redisClient, gameUUID, 'true');
-
     await setCurrentGamePlayer(redisClient, gameUUID, nextPlayer);
-
-
 
     return nextPlayer;
 }
@@ -171,5 +185,6 @@ module.exports = {
     getGameArea,
     getPaused,
     setPaused,
-    setNextPlayer
+    setNextPlayer,
+    setBotLastSuccessfulAttempt
 }
