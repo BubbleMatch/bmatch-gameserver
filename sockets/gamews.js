@@ -115,7 +115,7 @@ function openedBubble(io, socket, consul, redisClient) {
 
             if (currentUser.id !== currentGamePlayer.id) return;
 
-            if(currentGamePlayer.actionPoints === undefined){
+            if (currentGamePlayer.actionPoints === undefined) {
                 currentGamePlayer.actionPoints = 2;
             }
 
@@ -172,7 +172,8 @@ function openedBubble(io, socket, consul, redisClient) {
                             firstBubbleId: lastAction.requestedBubbles.bubbleId,
                             secondBubbleId: action.requestedBubbles.bubbleId
                         });
-                        await setPaused(redisClient, data.gameUUID, 'false');
+                        !
+                            await setPaused(redisClient, data.gameUUID, 'false');
                     }, 2000);
 
                 } else {
@@ -189,16 +190,24 @@ function openedBubble(io, socket, consul, redisClient) {
             let nextPlayer = await getCurrentGamePlayer(redisClient, data.gameUUID);
 
             while (nextPlayer.type === "Bot") {
+                let botAp = await getActionPointer(redisClient, data.gameUUID);
+                let chCellBotAction = await getAction(redisClient, data.gameUUID, botAp);
+
+                await sleep(2000);
+
                 let gameArea = await getGameArea(redisClient, data.gameUUID);
 
-                const [botSelect1, newLastSuccessfulAttempt1] = chooseCell(action.openBubbles, gameArea, nextPlayer.lastSuccessfulAttempt);
+                const [botSelect1, newLastSuccessfulAttempt1] = chooseCell(chCellBotAction.openBubbles, gameArea, nextPlayer.lastSuccessfulAttempt);
+                const [botSelect2, newLastSuccessfulAttempt2] = chooseCell(chCellBotAction.openBubbles, gameArea, newLastSuccessfulAttempt1, gameArea[Number(botSelect1)], botSelect1);
+
+                await sleep(150);
 
                 io.to(data.gameUUID).emit('openBubble', {
                     bubbleId: botSelect1,
                     bubbleImg: gameArea[Number(botSelect1)],
                 });
 
-                const [botSelect2, newLastSuccessfulAttempt2] = chooseCell(action.openBubbles, gameArea, newLastSuccessfulAttempt1, gameArea[Number(botSelect1)], botSelect1);
+                await sleep(200);
 
                 io.to(data.gameUUID).emit('openBubble', {
                     bubbleId: botSelect2,
@@ -217,19 +226,21 @@ function openedBubble(io, socket, consul, redisClient) {
 
                 let botAction = {
                     openBubbles: [...previousOpenBubbles],
-                    requestedBubbles: {
-                        firstBubble: {
+                    requestedBubbles: [
+                        {
                             bubbleId: botSelect1,
                             bubbleImg: gameArea[botSelect1]
                         },
-                        secondBubble: {
+                        {
                             bubbleId: botSelect2,
                             bubbleImg: gameArea[botSelect2]
                         }
-                    },
+                    ],
                     sender: nextPlayer,
                     serverTime: new Date().toISOString()
                 }
+
+                console.log(botAction.requestedBubbles, botAction.sender.username);
 
                 if (gameArea[botSelect1] !== gameArea[botSelect2]) {
                     await sleep(2000);
@@ -238,10 +249,11 @@ function openedBubble(io, socket, consul, redisClient) {
                         firstBubbleId: botSelect1,
                         secondBubbleId: botSelect2
                     });
+
                 } else {
                     botAction.openBubbles.push(
-                        { bubbleId: botSelect1, bubbleImg: gameArea[botSelect1] },
-                        { bubbleId: botSelect2, bubbleImg: gameArea[botSelect2] }
+                        {bubbleId: botSelect1, bubbleImg: gameArea[botSelect1]},
+                        {bubbleId: botSelect2, bubbleImg: gameArea[botSelect2]}
                     );
                 }
 

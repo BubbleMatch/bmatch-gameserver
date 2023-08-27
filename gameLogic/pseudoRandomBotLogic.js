@@ -12,7 +12,11 @@ function pseudoRandomChoice(lastSuccessfulAttempt) {
 }
 
 function chooseCell(openedCells, allCells, lastSuccessfulAttempt, knownBubbleValue = null, knownBubbleId = null) {
-    const availableCells = knownBubbleId ? allCells.filter(cell => !openedCells.includes(cell) && cell !== knownBubbleId) : allCells.filter(cell => !openedCells.includes(cell));
+    const openedCellIds = openedCells.map(cell => cell.bubbleId);
+
+    const availableCells = knownBubbleId ?
+        allCells.filter(cell => !openedCellIds.includes(cell) && cell !== knownBubbleId) :
+        allCells.filter(cell => !openedCellIds.includes(cell));
 
     const [shouldFindDuplicate, newLastSuccessfulAttempt] = pseudoRandomChoice(lastSuccessfulAttempt);
 
