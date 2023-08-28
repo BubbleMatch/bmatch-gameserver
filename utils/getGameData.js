@@ -25,6 +25,10 @@ async function getGamePlayers(redisClient, consul, gameUUID) {
     let gameData = await getLobbyData(redisClient, gameUUID)
     let gamePlayers = [];
 
+    if (gameData.players == null) {
+        throw new Error("No players in the game");
+    }
+
     // todo: fix exception of null
     for (let id of gameData.players) {
         let userFromRedisByUserId = await getUserFromRedisByUserId(redisClient, consul, id);
@@ -168,6 +172,18 @@ async function setNextPlayer(redisClient, consul, gameUUID, currentUser) {
     return nextPlayer;
 }
 
+async function emitCloseBubbles(io, gameUUID, select1, select2 ){
+    io.to(gameUUID).emit('closeBubbles', {
+        firstBubbleId: Number(select1), secondBubbleId: Number(select2)
+    });
+}
+
+async function emitOpenBubbles(io, gameUUID, bubbleId, bubbleImg ){
+    io.to(gameUUID).emit('openBubble', {
+        bubbleId: bubbleId, bubbleImg: bubbleImg,
+    });
+}
+
 module.exports = {
     getGamePlayers,
     setUserJWT_UUID_Cache,
@@ -186,5 +202,7 @@ module.exports = {
     getPaused,
     setPaused,
     setNextPlayer,
-    setBotLastSuccessfulAttempt
+    setBotLastSuccessfulAttempt,
+    emitCloseBubbles,
+    emitOpenBubbles
 }
