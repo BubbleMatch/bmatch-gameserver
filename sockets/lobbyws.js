@@ -14,7 +14,6 @@ const {
     getLobbyFromWsSocket,
     getLobbyUUID
 } = require("../utils/getLobbyData");
-const {json} = require("express");
 
 function join(io, socket, consul, redisClient) {
     socket.on('join', async (data) => {
@@ -44,7 +43,7 @@ function join(io, socket, consul, redisClient) {
                     let lobbyProperties = checkLobbyProperties(lobbyData.players);
                     let botId = lobbyProperties.bots.length;
 
-                    lobbyData.players.push({id: botId++, mmr: 0, username: `Bot${botId++}`, type: "Bot"})
+                    lobbyData.players.push({id: botId++, mmr: 0, username: `Bot${botId++}`, type: "Bot", lastSuccessfulAttempt: 0})
 
                     await setLobbyPlayersData(redisClient, lobbyId, lobbyData.players)
                     await emitPlayerListToLobby(io, redisClient, lobbyId);
@@ -91,7 +90,7 @@ function join(io, socket, consul, redisClient) {
     });
 }
 
-function disconnect(io, socket, redisClient) {
+function disconnectLobby(io, socket, redisClient) {
     socket.on('disconnect', async () => {
         try {
             let lobbyId = await getLobbyFromWsSocket(socket.id, redisClient);
@@ -164,10 +163,12 @@ function generateGame(io, socket, redisClient, consul) {
             }));
 
             await redisClient.hSet(`Game:${uuid}`, "LobbyData", JSON.stringify({
-                players: lobbyProperties.realPlayersOrAdminIds, bots: lobbyProperties.bots.length, readyPlayers: 0
+                players: lobbyProperties.realPlayersOrAdminIds, bots: lobbyProperties.bots, readyPlayers: 0, lobbyId: lobbyId
             }));
 
             await redisClient.hSet(`Game:${uuid}`, "GameArea", JSON.stringify(generateArea()));
+            await redisClient.hSet(`Game:${uuid}`, `LastActionId`, 0);
+            await redisClient.hSet(`Game:${uuid}`, `GamePaused`, 'true');
 
             io.to(lobbyId).emit("gameUUID", {
                 uuid: uuid
@@ -185,4 +186,4 @@ function generateGame(io, socket, redisClient, consul) {
     });
 }
 
-module.exports = {join, disconnect, generateGame}
+module.exports = {joinLobby: join, disconnectLobby, generateGame}
