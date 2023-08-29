@@ -31,10 +31,6 @@ function chooseCell(openedCells, allCells, lastSuccessfulAttempt, knownBubbleVal
 
     const availableCells = filteredCells.map((cell, index) => (cell !== -1) ? index : null).filter(index => index !== null);
 
-    if (availableCells.length === 0) {
-        throw new Error("No availableCells");
-    }
-
     const [shouldFindDuplicate, newLastSuccessfulAttempt] = pseudoRandomChoice(lastSuccessfulAttempt);
 
     if (shouldFindDuplicate && knownBubbleValue !== null) {
@@ -46,7 +42,6 @@ function chooseCell(openedCells, allCells, lastSuccessfulAttempt, knownBubbleVal
     }
 
     let randomIndex = availableCells[Math.floor(Math.random() * availableCells.length)];
-    console.log(randomIndex);
     return [randomIndex, newLastSuccessfulAttempt];
 }
 
