@@ -226,6 +226,7 @@ async function performBotActions(io, redisClient, consul, data) {
         let chCellBotAction = await getAction(redisClient, data.gameUUID, botAp);
 
         if (chCellBotAction.openBubbles.length === 100) {
+            console.log(chCellBotAction.openBubbles.length);
             return;
         }
 

@@ -1,3 +1,5 @@
+//https://dota2.fandom.com/wiki/Random_Distribution
+// using legacy data
 function pseudoRandomChoice(lastSuccessfulAttempt) {
     const C = 0.05;
     const probability = C * (lastSuccessfulAttempt + 1);
@@ -12,36 +14,32 @@ function pseudoRandomChoice(lastSuccessfulAttempt) {
 }
 
 function chooseCell(openedCells, allCells, lastSuccessfulAttempt, knownBubbleValue = null, knownBubbleId = null) {
-    const openedCellIds = openedCells.map(cell => cell.bubbleId);
+    const openedCellIds = openedCells.map(cell => cell.bubbleImg);
 
-    const availableCells = knownBubbleId ?
-        allCells.filter(cell => !openedCellIds.includes(cell) && cell !== knownBubbleId) :
-        allCells.filter(cell => !openedCellIds.includes(cell));
+    let filteredCells = [...allCells];
+
+    if (knownBubbleId !== null) {
+        filteredCells[knownBubbleId] = -1;
+    }
+
+    const availableCells = filteredCells.filter(x => !openedCellIds.includes(x));
+
+    if (availableCells.length === 0) {
+        throw new Error("No availableCells");
+    }
 
     const [shouldFindDuplicate, newLastSuccessfulAttempt] = pseudoRandomChoice(lastSuccessfulAttempt);
 
-    if (shouldFindDuplicate) {
-        if (knownBubbleValue) {
-            const duplicateIndex = availableCells.findIndex(cell => allCells[cell] === knownBubbleValue);
-            if (duplicateIndex !== -1) return [availableCells[duplicateIndex], newLastSuccessfulAttempt];
-        } else {
-            const duplicateCell = findDuplicate(availableCells, allCells, openedCells);
-            if (duplicateCell) return [duplicateCell, newLastSuccessfulAttempt];
+    if (shouldFindDuplicate && knownBubbleValue !== null) {
+        const duplicateIndex = filteredCells.findIndex(cell => cell === knownBubbleValue);
+        if (duplicateIndex !== -1) {
+            return [duplicateIndex, newLastSuccessfulAttempt];
         }
     }
 
     return [availableCells[Math.floor(Math.random() * availableCells.length)], newLastSuccessfulAttempt];
 }
 
-function findDuplicate(availableCells, allCells, openedCells) {
-    for (const cell of openedCells) {
-        const duplicateIndexes = allCells.reduce((acc, el, idx) => el === cell ? acc.concat(idx) : acc, []);
-        const availableDuplicates = duplicateIndexes.filter(idx => availableCells.includes(allCells[idx]));
-
-        if (availableDuplicates.length > 0) return allCells[availableDuplicates[0]];
-    }
-    return null;
-}
 
 
 module.exports = {
