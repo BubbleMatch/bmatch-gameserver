@@ -22,7 +22,9 @@ function chooseCell(openedCells, allCells, lastSuccessfulAttempt, knownBubbleVal
         filteredCells[knownBubbleId] = -1;
     }
 
-    const availableCells = filteredCells.filter(x => !openedCellIds.includes(x));
+    const availableCells = knownBubbleId ? allCells.filter(cell => !openedCellIds.includes(cell) && cell !== knownBubbleValue) : allCells.filter(cell => !openedCellIds.includes(cell));
+
+    console.log(`availableCells: ${availableCells.length}`);
 
     if (availableCells.length === 0) {
         throw new Error("No availableCells");
@@ -30,8 +32,11 @@ function chooseCell(openedCells, allCells, lastSuccessfulAttempt, knownBubbleVal
 
     const [shouldFindDuplicate, newLastSuccessfulAttempt] = pseudoRandomChoice(lastSuccessfulAttempt);
 
-    if (shouldFindDuplicate && knownBubbleValue !== null) {
+    if (knownBubbleValue !== null) {
         const duplicateIndex = filteredCells.findIndex(cell => cell === knownBubbleValue);
+        if (allCells[duplicateIndex] !== knownBubbleValue) {
+        }
+
         if (duplicateIndex !== -1) {
             return [duplicateIndex, newLastSuccessfulAttempt];
         }
@@ -39,7 +44,6 @@ function chooseCell(openedCells, allCells, lastSuccessfulAttempt, knownBubbleVal
 
     return [availableCells[Math.floor(Math.random() * availableCells.length)], newLastSuccessfulAttempt];
 }
-
 
 
 module.exports = {

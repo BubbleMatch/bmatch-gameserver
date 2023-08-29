@@ -83,6 +83,7 @@ function joinServer(io, socket, consul, redisClient) {
             const action = await getAction(redisClient, data.gameUUID, await getActionPointer(redisClient, data.gameUUID));
             if (action) io.to(socket.id).emit("gameAction", action);
 
+            await performBotActions(io, redisClient, consul, data);
         } catch (ex) {
             emitSystemMessage(io, socket, ex.message);
         }
@@ -204,8 +205,6 @@ function openedBubble(io, socket, consul, redisClient) {
             let veryLastActionPointer = await getActionPointer(redisClient, data.gameUUID);
             let veryLastAction = await getAction(redisClient, data.gameUUID, veryLastActionPointer);
 
-            console.log(veryLastAction.openBubbles.length)
-
             if (veryLastAction.openBubbles.length === 100) {
                 await setPaused(redisClient, data.gameUUID, 'true');
 
@@ -225,14 +224,14 @@ async function performBotActions(io, redisClient, consul, data) {
         let botAp = await getActionPointer(redisClient, data.gameUUID);
         let chCellBotAction = await getAction(redisClient, data.gameUUID, botAp);
 
-        if (chCellBotAction.openBubbles.length === 100) {
-            console.log(chCellBotAction.openBubbles.length);
-            return;
-        }
+        // if (chCellBotAction.openBubbles.length === 100) {
+        //     console.log(chCellBotAction.openBubbles.length);
+        //     return;
+        // }
 
         let nextTry = false;
 
-        await sleep(2000);
+        await sleep(200);
 
         let gameArea = await getGameArea(redisClient, data.gameUUID);
 
@@ -256,26 +255,33 @@ async function performBotActions(io, redisClient, consul, data) {
         await setActionPointer(redisClient, data.gameUUID, incrementedBotActionPointer);
 
         let botAction = {
-            openBubbles: [...previousOpenBubbles], requestedBubbles: [{
-                bubbleId: Number(botSelect1), bubbleImg: Number(gameArea[Number(botSelect1)])
-            }, {
-                bubbleId: Number(botSelect2), bubbleImg: Number(gameArea[Number(botSelect2)])
-            }], sender: nextPlayer, serverTime: new Date().toISOString()
+            openBubbles: [...previousOpenBubbles],
+            requestedBubbles: [
+                {
+                    bubbleId: Number(botSelect1), bubbleImg: Number(gameArea[Number(botSelect1)])
+                },
+                {
+                    bubbleId: Number(botSelect2), bubbleImg: Number(gameArea[Number(botSelect2)])
+                }
+            ], sender: nextPlayer, serverTime: new Date().toISOString()
         }
 
         if (gameArea[botSelect1] !== gameArea[botSelect2]) {
             await sleep(2000);
             await emitCloseBubbles(io, data.gameUUID, Number(botSelect1), Number(botSelect2))
         } else {
-            botAction.openBubbles.push({bubbleId: botSelect1, bubbleImg: gameArea[botSelect1]}, {
-                bubbleId: botSelect2, bubbleImg: gameArea[botSelect2]
-            });
+            botAction.openBubbles.push(
+                {bubbleId: botSelect1, bubbleImg: gameArea[botSelect1]},
+                {bubbleId: botSelect2, bubbleImg: gameArea[botSelect2]}
+            );
+            console.log(`opened: ${botAction.openBubbles.length}`);
+
             nextTry = true;
         }
 
         await setAction(redisClient, data.gameUUID, incrementedBotActionPointer, botAction);
 
-        await sleep(2000);
+        await sleep(200);
 
         if (!nextTry) {
             nextPlayer = await setNextPlayer(redisClient, consul, data.gameUUID, nextPlayer);
