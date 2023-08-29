@@ -14,7 +14,7 @@ function pseudoRandomChoice(lastSuccessfulAttempt) {
 }
 
 function chooseCell(openedCells, allCells, lastSuccessfulAttempt, knownBubbleValue = null, knownBubbleId = null) {
-    const openedCellIds = openedCells.map(cell => cell.bubbleImg);
+    const openCellsBubblesImgs = openedCells.map(cell => cell.bubbleImg);
 
     let filteredCells = [...allCells];
 
@@ -22,9 +22,14 @@ function chooseCell(openedCells, allCells, lastSuccessfulAttempt, knownBubbleVal
         filteredCells[knownBubbleId] = -1;
     }
 
-    const availableCells = knownBubbleId ? allCells.filter(cell => !openedCellIds.includes(cell) && cell !== knownBubbleValue) : allCells.filter(cell => !openedCellIds.includes(cell));
+    for (let openImg of openCellsBubblesImgs) {
+        const index = filteredCells.indexOf(openImg);
+        if (index !== -1) {
+            filteredCells[index] = -1;
+        }
+    }
 
-    console.log(`availableCells: ${availableCells.length}`);
+    const availableCells = filteredCells.map((cell, index) => (cell !== -1) ? index : null).filter(index => index !== null);
 
     if (availableCells.length === 0) {
         throw new Error("No availableCells");
@@ -32,19 +37,18 @@ function chooseCell(openedCells, allCells, lastSuccessfulAttempt, knownBubbleVal
 
     const [shouldFindDuplicate, newLastSuccessfulAttempt] = pseudoRandomChoice(lastSuccessfulAttempt);
 
-    if (knownBubbleValue !== null) {
+    if (shouldFindDuplicate && knownBubbleValue !== null) {
         const duplicateIndex = filteredCells.findIndex(cell => cell === knownBubbleValue);
-        if (allCells[duplicateIndex] !== knownBubbleValue) {
-        }
 
         if (duplicateIndex !== -1) {
             return [duplicateIndex, newLastSuccessfulAttempt];
         }
     }
 
-    return [availableCells[Math.floor(Math.random() * availableCells.length)], newLastSuccessfulAttempt];
+    let randomIndex = availableCells[Math.floor(Math.random() * availableCells.length)];
+    console.log(randomIndex);
+    return [randomIndex, newLastSuccessfulAttempt];
 }
-
 
 module.exports = {
     chooseCell
