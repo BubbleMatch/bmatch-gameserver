@@ -172,17 +172,47 @@ async function setNextPlayer(redisClient, consul, gameUUID, currentUser) {
     return nextPlayer;
 }
 
-async function emitCloseBubbles(io, gameUUID, select1, select2 ){
+async function emitCloseBubbles(io, gameUUID, select1, select2) {
     io.to(gameUUID).emit('closeBubbles', {
         firstBubbleId: Number(select1), secondBubbleId: Number(select2)
     });
 }
 
-async function emitOpenBubbles(io, gameUUID, bubbleId, bubbleImg ){
+async function emitOpenBubbles(io, gameUUID, bubbleId, bubbleImg) {
     io.to(gameUUID).emit('openBubble', {
         bubbleId: bubbleId, bubbleImg: bubbleImg,
     });
 }
+
+async function addGameJWTsToRedis(redisClient, gameUUID, token) {
+    let userJWTs = await getGameJWTFromRedis(redisClient, gameUUID)
+
+    if (!userJWTs.includes(token)) {
+        userJWTs.push(token);
+        await redisClient.hSet(`Game:${gameUUID}`, `UserJWTs`, JSON.stringify(userJWTs));
+    }
+}
+
+async function getGameJWTFromRedis(redisClient, gameUUID) {
+    let userJWTsStr = await redisClient.hGet(`Game:${gameUUID}`, `UserJWTs`);
+    return userJWTsStr ? JSON.parse(userJWTsStr) : [];
+}
+
+async function addGameWebSocketsToRedis(redisClient, gameUUID, token) {
+    let userWebSockets = await getGameWebSocketsFromRedis(redisClient, gameUUID)
+
+    if (!userWebSockets.includes(token)) {
+        userWebSockets.push(token);
+        await redisClient.hSet(`Game:${gameUUID}`, `UserSockets`, JSON.stringify(userWebSockets));
+    }
+}
+
+async function getGameWebSocketsFromRedis(redisClient, gameUUID) {
+    let userWebSockets = await redisClient.hGet(`Game:${gameUUID}`, `UserSockets`);
+    return userWebSockets ? JSON.parse(userWebSockets) : [];
+}
+
+
 
 module.exports = {
     getGamePlayers,
@@ -204,5 +234,9 @@ module.exports = {
     setNextPlayer,
     setBotLastSuccessfulAttempt,
     emitCloseBubbles,
-    emitOpenBubbles
+    emitOpenBubbles,
+    addGameJWTsToRedis,
+    getGameJWTFromRedis,
+    addGameWebSocketsToRedis,
+    getGameWebSocketsFromRedis
 }
