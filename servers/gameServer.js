@@ -1,9 +1,16 @@
 const https = require('https');
+const http = require('http');
 const { Server } = require("socket.io");
-const {joinServer, disconnectServer, openedBubble} = require("../sockets/gamews");
+const {joinServer, disconnectServer, openedBubble, chatMessage, ping} = require("../sockets/gamews");
+
+const useTLS = process.env.USE_TLS;
 
 function startGameServer(app, options, consul, redisClient) {
-    const server = https.createServer(options, app);
+
+    const server = useTLS
+        ? https.createServer(options, app)
+        : http.createServer(app);
+
     const io = new Server(server, {
         cors: {
             origin: '*'
@@ -14,6 +21,8 @@ function startGameServer(app, options, consul, redisClient) {
         joinServer(io, socket, consul, redisClient);
         disconnectServer(io, socket, redisClient);
         openedBubble(io, socket, consul, redisClient);
+        chatMessage(io, socket, consul, redisClient);
+        ping(socket, io);
     });
 
     server.listen(8005, () => {

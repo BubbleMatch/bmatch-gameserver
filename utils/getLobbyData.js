@@ -43,7 +43,6 @@ async function fetchLobbyDataAndPlayers(redisClient, lobbyID) {
 
 async function setUserSocket(redisClient, socketId, lobbyID) {
     await redisClient.hSet(`Socket:${socketId}`, "lobbyID", lobbyID);
-    await redisClient.expire(`Socket:${socketId}`, 3600);
 }
 
 async function setLobbyPlayersData(redisClient, lobbyID, lobbyDataPlayers) {

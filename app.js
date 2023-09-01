@@ -4,17 +4,22 @@ const cors = require("cors");
 const Consul = require('consul');
 const fs = require('fs');
 const path = require('path');
-const { consulHost, consulPort, getRedisConfig } = require("./config/config");
-const { startLobbyServer } = require('./servers/lobbyServer');
-const { startGameServer } = require('./servers/gameServer');
+const {consulHost, consulPort, getRedisConfig} = require("./config/config");
+const {startLobbyServer} = require('./servers/lobbyServer');
+const {startGameServer} = require('./servers/gameServer');
 
 const app = express();
-const tlsCertPath = path.join(__dirname, 'tls', 'dev-cert.crt');
-const tlsKeyPath = path.join(__dirname, 'tls', 'dev-key.key');
-const options = {
-    key: fs.readFileSync(tlsKeyPath),
-    cert: fs.readFileSync(tlsCertPath)
-};
+
+const useTLS = process.env.USE_TLS === 'true';
+
+let options = {};
+
+if (useTLS) {
+    const tlsCertPath = path.join(__dirname, 'tls', process.env.TLS_CERT_FILE || 'dev-cert.crt');
+    const tlsKeyPath = path.join(__dirname, 'tls', process.env.TLS_KEY_FILE || 'dev-key.key');
+    options.key = fs.readFileSync(tlsKeyPath);
+    options.cert = fs.readFileSync(tlsCertPath);
+}
 
 const consul = new Consul({
     host: consulHost, port: consulPort

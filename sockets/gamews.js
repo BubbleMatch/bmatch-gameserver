@@ -1,49 +1,119 @@
 const {
-    getUserJWTCache, setUserJWT_UUID_Cache, getLobbyData, incrementReadyPlayers, getGamePlayers, getCurrentGamePlayer,
-    setCurrentGamePlayer, getReadyPlayers, getActionPointer, getUserFromRedisByUserId, getGameArea, setAction,
-    setActionPointer, getAction, setPaused, getPaused, setNextPlayer, setBotLastSuccessfulAttempt
+    getUserJWTCache,
+    setUserJWT_UUID_Cache,
+    getLobbyData,
+    incrementReadyPlayers,
+    getGamePlayers,
+    getCurrentGamePlayer,
+    setCurrentGamePlayer,
+    getReadyPlayers,
+    getActionPointer,
+    getUserFromRedisByUserId,
+    getGameArea,
+    setAction,
+    setActionPointer,
+    getAction,
+    setPaused,
+    getPaused,
+    setNextPlayer,
+    setBotLastSuccessfulAttempt,
+    emitOpenBubbles,
+    emitCloseBubbles,
+    addGameJWTsToRedis,
+    addGameWebSocketsToRedis,
+    getGameWebSocketsFromRedis,
+    addGameWebSocketsGuestsToRedis,
+    linkUserWithWebSocket,
+    getLinkedUsersWithWebSocket, getGameWebSocketsGuestsFromRedis,
 } = require("../utils/getGameData");
-const {extractAndVerifyJWT, emitSystemMessage, checkLobbyProperties} = require("../utils/getLobbyData");
-const {setNextPlayerId} = require("../gameLogic/queue");
+const {
+    extractAndVerifyJWT, emitSystemMessage, checkLobbyProperties,
+} = require("../utils/getLobbyData");
 const {chooseCell} = require("../gameLogic/pseudoRandomBotLogic");
 
-// TODO: emit openBubble only for 4 person, exclude others
+async function handleUserAuthentication(io, data, socket, redisClient, consul) {
+    const currentUser = await getUserJWTCache(redisClient, data.token);
 
-async function handleUserAuthentication(data, socket, redisClient, consul) {
-    let currentUser = await getUserJWTCache(redisClient, data.token);
-    if (currentUser === null) {
-        const lobbyData = await getLobbyData(redisClient, data.gameUUID);
-        const userFromJWT = await extractAndVerifyJWT(data.token, consul, redisClient);
-        const isGamePlayer = lobbyData.players.includes(userFromJWT.id);
-        if (!isGamePlayer) return null;
+    // all users ws
+    await linkUserWithWebSocket(redisClient, data.gameUUID, socket.id);
 
-        await setUserJWT_UUID_Cache(redisClient, data.token, data.gameUUID, socket.id, userFromJWT.id);
-        await incrementReadyPlayers(redisClient, data.gameUUID);
-        return userFromJWT.id;
+    if (!currentUser) {
+        return await authenticateNewUser(io, data, socket, redisClient, consul);
     }
+
+    if (currentUser.UUID !== data.gameUUID) {
+        io.to(socket.id).emit("userAlreadyInGame", data.gameUUID);
+        return false;
+    }
+
+    const userFromJWT = await extractAndVerifyJWT(data.token, consul, redisClient);
+    const lobbyData = await getLobbyData(redisClient, data.gameUUID);
+    const isGamePlayer = lobbyData.players.includes(userFromJWT.id);
+
+    if (!isGamePlayer) {
+        return false;
+    }
+
+    await setUserJWT_UUID_Cache(redisClient, data.token, data.gameUUID, socket.id, userFromJWT.id);
+    await addGameJWTsToRedis(redisClient, data.gameUUID, data.token);
+
     return currentUser;
+}
+
+async function authenticateNewUser(io, data, socket, redisClient, consul) {
+    const lobbyData = await getLobbyData(redisClient, data.gameUUID);
+    const userFromJWT = await extractAndVerifyJWT(data.token, consul, redisClient);
+
+    if (!lobbyData.players.includes(userFromJWT.id)){
+        //only guests ws
+        await addGameWebSocketsGuestsToRedis(redisClient, data.gameUUID, socket.id);
+        return false
+    }
+
+    await setUserJWT_UUID_Cache(redisClient, data.token, data.gameUUID, socket.id, userFromJWT.id);
+    await incrementReadyPlayers(redisClient, data.gameUUID);
+
+    //add players ws
+    await addGameWebSocketsToRedis(redisClient, data.gameUUID, socket.id)
+
+
+    lobbyData.userWS = lobbyData.userWS || [];
+    const userIndex = lobbyData.userWS.findIndex(u => u.id === userFromJWT.id);
+    if (userIndex !== -1) {
+        lobbyData.userWS[userIndex].ws = socket.id;
+    } else {
+        lobbyData.userWS.push({ id: userFromJWT.id, ws: socket.id });
+    }
+
+    await redisClient.hSet(`Game:${data.gameUUID}`, 'LobbyData', JSON.stringify(lobbyData));
+
+    return userFromJWT.id;
 }
 
 function joinServer(io, socket, consul, redisClient) {
     socket.on('join', async (data) => {
-        if (!data.gameUUID) return;
-
-        socket.join(data.gameUUID);
-        const currentGamePlayers = await getGamePlayers(redisClient, consul, data.gameUUID);
-        io.to(data.gameUUID).emit('playerList', currentGamePlayers);
-
-        if (!data.token) {
-            const actionPointer = getActionPointer(redisClient, data.gameUUID)
-            const action = await getAction(redisClient, data.gameUUID, actionPointer);
-            if (action) io.to(socket.id).emit("gameAction", action);
-            return;
-        }
-
         try {
-            const currentUserId = await handleUserAuthentication(data, socket, redisClient, consul);
+            if (!data.gameUUID) return;
+
+            socket.join(data.gameUUID);
+            const currentGamePlayers = await getGamePlayers(redisClient, consul, data.gameUUID);
+            io.to(data.gameUUID).emit('playerList', currentGamePlayers);
+
+            if (!data.token) {
+                const actionPointer = getActionPointer(redisClient, data.gameUUID)
+                const action = await getAction(redisClient, data.gameUUID, actionPointer-2);
+                console.log(action);
+                if (action) io.to(socket.id).emit("gameAction", action);
+                return;
+            }
+
+            const currentUserId = await handleUserAuthentication(io, data, socket, redisClient, consul);
 
             if (!currentUserId) {
-                const action = await getAction(redisClient, data.gameUUID);
+                // Guest handler
+                const actionPointer = getActionPointer(redisClient, data.gameUUID)
+                const action = await getAction(redisClient, data.gameUUID, actionPointer-2);
+                console.log(action);
                 if (action) io.to(socket.id).emit("gameAction", action);
                 return;
             }
@@ -65,7 +135,6 @@ function joinServer(io, socket, consul, redisClient) {
 
             const action = await getAction(redisClient, data.gameUUID, await getActionPointer(redisClient, data.gameUUID));
             if (action) io.to(socket.id).emit("gameAction", action);
-
         } catch (ex) {
             emitSystemMessage(io, socket, ex.message);
         }
@@ -75,42 +144,39 @@ function joinServer(io, socket, consul, redisClient) {
 function disconnectServer(io, socket, redisClient) {
     socket.on('disconnect', async () => {
 
+        try {
+            let currentGameUUID = await getLinkedUsersWithWebSocket(redisClient, socket.id);
+            let lobbyData = await fetchLobbyDataAndPlayers(redisClient, currentGameUUID);
+            let excludeCurrentSocketId = lobbyData.players.filter(player => player.ws !== socket.id);
+
+            if (currentGameUUID == null) {
+                throw new Error("Not able to parse lobby-id");
+            }
+
+            let playersWS = await getGameWebSocketsFromRedis(redisClient, currentGameUUID );
+            let guestsWS = await getGameWebSocketsGuestsFromRedis(redisClient, currentGameUUID);
+
+            console.log(playersWS);
+            console.log(guestsWS);
+
+        } catch (e) {
+            emitSystemMessage(io, socket, e.message);
+        }
     });
 }
 
 function openedBubble(io, socket, consul, redisClient) {
     socket.on('sendOpenedBubble', async (data) => {
         try {
-            if (!data.bubbleId) return;
-            if (!data.token) return;
-            if (!data.gameUUID) return;
+            if (!data.bubbleId || !data.token || !data.gameUUID) return;
 
-            let isPaused = await getPaused(redisClient, data.gameUUID);
-
+            const isPaused = await getPaused(redisClient, data.gameUUID);
             if (isPaused) return;
 
-            let currentUserId = await getUserJWTCache(redisClient, data.token);
+            const userAuth = await handleUserAuthentication(io, data, socket, redisClient, consul);
+            if (!userAuth) return;
 
-            if (currentUserId === null) {
-
-                let lobbyData = await getLobbyData(redisClient, data.gameUUID);
-
-                let userFromJWT = await extractAndVerifyJWT(data.token, consul, redisClient);
-
-                let playerFilter = lobbyData.players.filter(id => id === userFromJWT.id);
-                let isGamePlayer = playerFilter.length === 1;
-                if (!isGamePlayer) {
-                    // todo: return last action
-                    // todo: return all open  bubbles
-                    return;
-                }
-                currentUserId = playerFilter[0];
-
-                await setUserJWT_UUID_Cache(redisClient, data.token, data.gameUUID, socket.id, currentUserId);
-                currentUserId = await getUserJWTCache(redisClient, data.token);
-            }
-
-            let currentUser = await getUserFromRedisByUserId(redisClient, consul, currentUserId.UserId);
+            const currentUser = await getUserFromRedisByUserId(redisClient, consul, userAuth.UserId);
             let currentGamePlayer = await getCurrentGamePlayer(redisClient, data.gameUUID);
 
             if (currentUser.id !== currentGamePlayer.id) return;
@@ -120,14 +186,13 @@ function openedBubble(io, socket, consul, redisClient) {
             }
 
             if (currentGamePlayer.actionPoints === 0) {
-
-                let nextPlayer = await setNextPlayer(redisClient, consul, data.gameUUID, currentUserId);
+                let nextPlayer = await setNextPlayer(redisClient, consul, data.gameUUID, userAuth);
                 io.to(data.gameUUID).emit('currentPlayer', nextPlayer);
 
-                console.log("No action gamePoints");
-
-                return
+                return;
             }
+
+            await setPaused(redisClient, data.gameUUID, 'true');
 
             let actionPointer = await getActionPointer(redisClient, data.gameUUID);
 
@@ -136,13 +201,9 @@ function openedBubble(io, socket, consul, redisClient) {
             let gameArea = await getGameArea(redisClient, data.gameUUID);
 
             let action = {
-                openBubbles: [],
-                requestedBubbles: {
-                    bubbleId: data.bubbleId,
-                    bubbleImg: gameArea[data.bubbleId],
-                },
-                sender: currentGamePlayer,
-                serverTime: new Date().toISOString()
+                openBubbles: [], requestedBubbles: {
+                    bubbleId: Number(data.bubbleId), bubbleImg: Number(gameArea[data.bubbleId]),
+                }, sender: currentGamePlayer, serverTime: new Date().toISOString()
             }
 
             let incrementedActionPointer = ++actionPointer;
@@ -152,10 +213,7 @@ function openedBubble(io, socket, consul, redisClient) {
             --currentGamePlayer.actionPoints;
             await setCurrentGamePlayer(redisClient, data.gameUUID, currentGamePlayer);
 
-            io.to(data.gameUUID).emit('openBubble', {
-                bubbleId: data.bubbleId,
-                bubbleImg: gameArea[data.bubbleId],
-            });
+            await emitOpenBubbles(io, data.gameUUID, Number(data.bubbleId), Number(gameArea[Number(data.bubbleId)]))
 
             if (lastAction && lastAction.requestedBubbles) {
                 action.openBubbles = [...action.openBubbles, ...lastAction.openBubbles];
@@ -164,16 +222,12 @@ function openedBubble(io, socket, consul, redisClient) {
             if (lastAction && lastAction.requestedBubbles && currentGamePlayer.actionPoints === 0) {
                 if ((lastAction.requestedBubbles.bubbleImg !== action.requestedBubbles.bubbleImg)) {
 
-                    let nextPlayer = await setNextPlayer(redisClient, consul, data.gameUUID, currentUserId);
+                    let nextPlayer = await setNextPlayer(redisClient, consul, data.gameUUID, userAuth);
                     io.to(data.gameUUID).emit('currentPlayer', nextPlayer);
 
                     setTimeout(async () => {
-                        io.to(data.gameUUID).emit('closeBubbles', {
-                            firstBubbleId: lastAction.requestedBubbles.bubbleId,
-                            secondBubbleId: action.requestedBubbles.bubbleId
-                        });
-                        !
-                            await setPaused(redisClient, data.gameUUID, 'false');
+                        await emitCloseBubbles(io, data.gameUUID, Number(lastAction.requestedBubbles.bubbleId), Number(action.requestedBubbles.bubbleId));
+                        await setPaused(redisClient, data.gameUUID, 'false');
                     }, 2000);
 
                 } else {
@@ -187,82 +241,24 @@ function openedBubble(io, socket, consul, redisClient) {
             await setAction(redisClient, data.gameUUID, incrementedActionPointer, action);
             await setActionPointer(redisClient, data.gameUUID, incrementedActionPointer);
 
+            await setPaused(redisClient, data.gameUUID, 'false');
+
             let nextPlayer = await getCurrentGamePlayer(redisClient, data.gameUUID);
 
-            while (nextPlayer.type === "Bot") {
-                let botAp = await getActionPointer(redisClient, data.gameUUID);
-                let chCellBotAction = await getAction(redisClient, data.gameUUID, botAp);
+            if (nextPlayer.type === "Bot") {
+                await setPaused(redisClient, data.gameUUID, 'true');
+                await performBotActions(io, redisClient, consul, data);
+                await setPaused(redisClient, data.gameUUID, 'false');
+            }
 
-                await sleep(2000);
+            let veryLastActionPointer = await getActionPointer(redisClient, data.gameUUID);
+            let veryLastAction = await getAction(redisClient, data.gameUUID, veryLastActionPointer);
 
-                let gameArea = await getGameArea(redisClient, data.gameUUID);
-
-                const [botSelect1, newLastSuccessfulAttempt1] = chooseCell(chCellBotAction.openBubbles, gameArea, nextPlayer.lastSuccessfulAttempt);
-                const [botSelect2, newLastSuccessfulAttempt2] = chooseCell(chCellBotAction.openBubbles, gameArea, newLastSuccessfulAttempt1, gameArea[Number(botSelect1)], botSelect1);
-
-                await sleep(150);
-
-                io.to(data.gameUUID).emit('openBubble', {
-                    bubbleId: botSelect1,
-                    bubbleImg: gameArea[Number(botSelect1)],
-                });
-
-                await sleep(200);
-
-                io.to(data.gameUUID).emit('openBubble', {
-                    bubbleId: botSelect2,
-                    bubbleImg: gameArea[Number(botSelect2)],
-                });
-
-                await setBotLastSuccessfulAttempt(redisClient, data.gameUUID, nextPlayer.id, newLastSuccessfulAttempt2);
-
-                let botActionPointer = await getActionPointer(redisClient, data.gameUUID);
-
-                let botLastAction = await getAction(redisClient, data.gameUUID, botActionPointer);
-                let previousOpenBubbles = botLastAction ? botLastAction.openBubbles : [];
-
-                let incrementedBotActionPointer = ++botActionPointer;
-                await setActionPointer(redisClient, data.gameUUID, incrementedBotActionPointer);
-
-                let botAction = {
-                    openBubbles: [...previousOpenBubbles],
-                    requestedBubbles: [
-                        {
-                            bubbleId: botSelect1,
-                            bubbleImg: gameArea[botSelect1]
-                        },
-                        {
-                            bubbleId: botSelect2,
-                            bubbleImg: gameArea[botSelect2]
-                        }
-                    ],
-                    sender: nextPlayer,
-                    serverTime: new Date().toISOString()
-                }
-
-                console.log(botAction.requestedBubbles, botAction.sender.username);
-
-                if (gameArea[botSelect1] !== gameArea[botSelect2]) {
-                    await sleep(2000);
-
-                    io.to(data.gameUUID).emit('closeBubbles', {
-                        firstBubbleId: botSelect1,
-                        secondBubbleId: botSelect2
-                    });
-
-                } else {
-                    botAction.openBubbles.push(
-                        {bubbleId: botSelect1, bubbleImg: gameArea[botSelect1]},
-                        {bubbleId: botSelect2, bubbleImg: gameArea[botSelect2]}
-                    );
-                }
-
-                await setAction(redisClient, data.gameUUID, incrementedBotActionPointer, botAction);
-
-                await sleep(2000);
-
-                nextPlayer = await setNextPlayer(redisClient, consul, data.gameUUID, nextPlayer);
-                io.to(data.gameUUID).emit('currentPlayer', nextPlayer);
+            if (veryLastAction.openBubbles.length === 100) {
+                await setPaused(redisClient, data.gameUUID, 'true');
+                io.to(data.gameUUID).emit('gameOver');
+                // TODO:  send to kafka game data
+                // TODO:  REMOVE JWTS UUID
             }
 
         } catch (e) {
@@ -271,8 +267,115 @@ function openedBubble(io, socket, consul, redisClient) {
     })
 }
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
+function chatMessage(io, socket, consul, redisClient) {
+    socket.on("chatMessage", async (data) => {
+        try {
+            if (data.message.length < 1) return;
+            if (!data.gameUUID) return;
+
+            let userAuth = await handleUserAuthentication(io, data, socket, redisClient, consul);
+
+            let userSockets = await getGameWebSocketsFromRedis(redisClient, data.gameUUID);
+
+            if (!userSockets.includes(socket.id)) {
+                io.to(socket.id).emit('receiveMessage', {message: "nobody hears you ;(", username: "System"});
+                return;
+            }
+
+            for (const userSocketId of userSockets) {
+                io.to(userSocketId).emit('receiveMessage', {message: data.message, username: data.username});
+            }
+
+        } catch (e) {
+            emitSystemMessage(io, socket, e.message);
+        }
+    });
 }
 
-module.exports = {joinServer, disconnectServer, openedBubble}
+async function performBotActions(io, redisClient, consul, data) {
+    let nextPlayer = await getCurrentGamePlayer(redisClient, data.gameUUID);
+
+    while (nextPlayer.type === "Bot") {
+        let botAp = await getActionPointer(redisClient, data.gameUUID);
+        let chCellBotAction = await getAction(redisClient, data.gameUUID, botAp);
+
+        if (chCellBotAction.openBubbles.length === 100) {
+            console.log(chCellBotAction.openBubbles.length);
+            return;
+        }
+
+        let nextTry = false;
+
+        await randomSleep(1000, 2000);
+
+        let gameArea = await getGameArea(redisClient, data.gameUUID);
+
+        const [botSelect1, newLastSuccessfulAttempt1] = chooseCell(chCellBotAction.openBubbles, gameArea, nextPlayer.lastSuccessfulAttempt);
+        const [botSelect2, newLastSuccessfulAttempt2] = chooseCell(chCellBotAction.openBubbles, gameArea, newLastSuccessfulAttempt1, gameArea[Number(botSelect1)], botSelect1);
+
+        await randomSleep(200, 1000);
+        await emitOpenBubbles(io, data.gameUUID, Number(botSelect1), Number(gameArea[Number(botSelect1)]));
+
+        await randomSleep(200, 1000);
+        await emitOpenBubbles(io, data.gameUUID, Number(botSelect2), Number(gameArea[Number(botSelect2)]));
+
+        await setBotLastSuccessfulAttempt(redisClient, data.gameUUID, nextPlayer.id, newLastSuccessfulAttempt2);
+
+        let botActionPointer = await getActionPointer(redisClient, data.gameUUID);
+
+        let botLastAction = await getAction(redisClient, data.gameUUID, botActionPointer);
+
+        if (botLastAction && botLastAction.openBubbles.length === 100) {
+            await setPaused(redisClient, data.gameUUID, 'true');
+            io.to(data.gameUUID).emit('gameOver');
+            return;
+        }
+
+        let previousOpenBubbles = botLastAction ? botLastAction.openBubbles : [];
+
+        let incrementedBotActionPointer = ++botActionPointer;
+        await setActionPointer(redisClient, data.gameUUID, incrementedBotActionPointer);
+
+        let botAction = {
+            openBubbles: [...previousOpenBubbles], requestedBubbles: [{
+                bubbleId: Number(botSelect1), bubbleImg: Number(gameArea[Number(botSelect1)])
+            }, {
+                bubbleId: Number(botSelect2), bubbleImg: Number(gameArea[Number(botSelect2)])
+            }], sender: nextPlayer, serverTime: new Date().toISOString()
+        }
+
+        if (gameArea[botSelect1] !== gameArea[botSelect2]) {
+            await randomSleep(1000, 2000);
+
+            await emitCloseBubbles(io, data.gameUUID, Number(botSelect1), Number(botSelect2))
+        } else {
+            botAction.openBubbles.push({bubbleId: botSelect1, bubbleImg: gameArea[botSelect1]}, {
+                bubbleId: botSelect2, bubbleImg: gameArea[botSelect2]
+            });
+
+            nextTry = true;
+        }
+
+        await setAction(redisClient, data.gameUUID, incrementedBotActionPointer, botAction);
+
+        await randomSleep(1000, 2500);
+
+        if (!nextTry) {
+            nextPlayer = await setNextPlayer(redisClient, consul, data.gameUUID, nextPlayer);
+            io.to(data.gameUUID).emit('currentPlayer', nextPlayer);
+        }
+    }
+}
+
+
+function ping(socket, io) {
+    socket.on("ping", () => {
+        io.to(socket.id).emit("pong");
+    });
+}
+
+function randomSleep(min, max) {
+    return new Promise(resolve => setTimeout(resolve, Math.random() * (max - min) + min));
+}
+
+module.exports = {joinServer, disconnectServer, openedBubble, chatMessage, ping}

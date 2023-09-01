@@ -25,6 +25,10 @@ async function getGamePlayers(redisClient, consul, gameUUID) {
     let gameData = await getLobbyData(redisClient, gameUUID)
     let gamePlayers = [];
 
+    if (gameData.players == null) {
+        throw new Error("No players in the game");
+    }
+
     // todo: fix exception of null
     for (let id of gameData.players) {
         let userFromRedisByUserId = await getUserFromRedisByUserId(redisClient, consul, id);
@@ -168,6 +172,80 @@ async function setNextPlayer(redisClient, consul, gameUUID, currentUser) {
     return nextPlayer;
 }
 
+async function emitCloseBubbles(io, gameUUID, select1, select2) {
+    io.to(gameUUID).emit('closeBubbles', {
+        firstBubbleId: Number(select1), secondBubbleId: Number(select2)
+    });
+}
+
+async function emitOpenBubbles(io, gameUUID, bubbleId, bubbleImg) {
+    io.to(gameUUID).emit('openBubble', {
+        bubbleId: bubbleId, bubbleImg: bubbleImg,
+    });
+}
+
+async function addGameJWTsToRedis(redisClient, gameUUID, token) {
+    let userJWTs = await getGameJWTFromRedis(redisClient, gameUUID)
+
+    if (!userJWTs.includes(token)) {
+        userJWTs.push(token);
+        await redisClient.hSet(`Game:${gameUUID}`, `UserJWTs`, JSON.stringify(userJWTs));
+    }
+}
+
+async function getGameJWTFromRedis(redisClient, gameUUID) {
+    let userJWTsStr = await redisClient.hGet(`Game:${gameUUID}`, `UserJWTs`);
+    return userJWTsStr ? JSON.parse(userJWTsStr) : [];
+}
+
+/**
+ * Adds a game's web socket wsId to a Redis store
+ * using for send OpenBubble and closeBubble actions
+ */
+
+async function addGameWebSocketsToRedis(redisClient, gameUUID, wsId) {
+    let userWebSockets = await getGameWebSocketsFromRedis(redisClient, gameUUID)
+
+    if (!userWebSockets.includes(wsId)) {
+        userWebSockets.push(wsId);
+        await redisClient.hSet(`Game:${gameUUID}`, `PlayersSockets`, JSON.stringify(userWebSockets));
+    }
+}
+
+async function getGameWebSocketsFromRedis(redisClient, gameUUID) {
+    let userWebSockets = await redisClient.hGet(`Game:${gameUUID}`, `PlayersSockets`);
+    return userWebSockets ? JSON.parse(userWebSockets) : [];
+}
+
+/**
+ * Adds a game's web socket wsId to a Redis store
+ * using for send guests actions
+ */
+
+async function addGameWebSocketsGuestsToRedis(redisClient, gameUUID, wsId) {
+    let userWebSockets = await getGameWebSocketsGuestsFromRedis(redisClient, gameUUID)
+
+    if (!userWebSockets.includes(wsId)) {
+        userWebSockets.push(wsId);
+        await redisClient.hSet(`Game:${gameUUID}`, `GuestsSockets`, JSON.stringify(userWebSockets));
+    }
+}
+
+async function getGameWebSocketsGuestsFromRedis(redisClient, gameUUID) {
+    let userWebSockets = await redisClient.hGet(`Game:${gameUUID}`, `GuestsSockets`);
+    return userWebSockets ? JSON.parse(userWebSockets) : [];
+}
+
+async function linkUserWithWebSocket(redisClient, gameUUID, wsId) {
+    await redisClient.hSet(`GameWS:${wsId}`, "gameUUID", gameUUID);
+}
+
+async function getLinkedUsersWithWebSocket(redisClient, socketId) {
+    const lobbyID = await redisClient.hGet(`GameWS:${socketId}`, "gameUUID");
+    if (!lobbyID) return null;
+    return lobbyID;
+}
+
 module.exports = {
     getGamePlayers,
     setUserJWT_UUID_Cache,
@@ -186,5 +264,15 @@ module.exports = {
     getPaused,
     setPaused,
     setNextPlayer,
-    setBotLastSuccessfulAttempt
+    setBotLastSuccessfulAttempt,
+    emitCloseBubbles,
+    emitOpenBubbles,
+    addGameJWTsToRedis,
+    getGameJWTFromRedis,
+    addGameWebSocketsToRedis,
+    getGameWebSocketsFromRedis,
+    addGameWebSocketsGuestsToRedis,
+    getGameWebSocketsGuestsFromRedis,
+    linkUserWithWebSocket,
+    getLinkedUsersWithWebSocket
 }

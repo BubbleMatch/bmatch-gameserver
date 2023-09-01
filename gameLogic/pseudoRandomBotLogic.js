@@ -1,3 +1,5 @@
+//https://dota2.fandom.com/wiki/Random_Distribution
+// using legacy data
 function pseudoRandomChoice(lastSuccessfulAttempt) {
     const C = 0.05;
     const probability = C * (lastSuccessfulAttempt + 1);
@@ -12,37 +14,36 @@ function pseudoRandomChoice(lastSuccessfulAttempt) {
 }
 
 function chooseCell(openedCells, allCells, lastSuccessfulAttempt, knownBubbleValue = null, knownBubbleId = null) {
-    const openedCellIds = openedCells.map(cell => cell.bubbleId);
+    const openCellsBubblesImgs = openedCells.map(cell => cell.bubbleImg);
 
-    const availableCells = knownBubbleId ?
-        allCells.filter(cell => !openedCellIds.includes(cell) && cell !== knownBubbleId) :
-        allCells.filter(cell => !openedCellIds.includes(cell));
+    let filteredCells = [...allCells];
 
-    const [shouldFindDuplicate, newLastSuccessfulAttempt] = pseudoRandomChoice(lastSuccessfulAttempt);
+    if (knownBubbleId !== null) {
+        filteredCells[knownBubbleId] = -1;
+    }
 
-    if (shouldFindDuplicate) {
-        if (knownBubbleValue) {
-            const duplicateIndex = availableCells.findIndex(cell => allCells[cell] === knownBubbleValue);
-            if (duplicateIndex !== -1) return [availableCells[duplicateIndex], newLastSuccessfulAttempt];
-        } else {
-            const duplicateCell = findDuplicate(availableCells, allCells, openedCells);
-            if (duplicateCell) return [duplicateCell, newLastSuccessfulAttempt];
+    for (let openImg of openCellsBubblesImgs) {
+        const index = filteredCells.indexOf(openImg);
+        if (index !== -1) {
+            filteredCells[index] = -1;
         }
     }
 
-    return [availableCells[Math.floor(Math.random() * availableCells.length)], newLastSuccessfulAttempt];
-}
+    const availableCells = filteredCells.map((cell, index) => (cell !== -1) ? index : null).filter(index => index !== null);
 
-function findDuplicate(availableCells, allCells, openedCells) {
-    for (const cell of openedCells) {
-        const duplicateIndexes = allCells.reduce((acc, el, idx) => el === cell ? acc.concat(idx) : acc, []);
-        const availableDuplicates = duplicateIndexes.filter(idx => availableCells.includes(allCells[idx]));
+    const [shouldFindDuplicate, newLastSuccessfulAttempt] = pseudoRandomChoice(lastSuccessfulAttempt);
 
-        if (availableDuplicates.length > 0) return allCells[availableDuplicates[0]];
+    if (shouldFindDuplicate && knownBubbleValue !== null) {
+        const duplicateIndex = filteredCells.findIndex(cell => cell === knownBubbleValue);
+
+        if (duplicateIndex !== -1) {
+            return [duplicateIndex, newLastSuccessfulAttempt];
+        }
     }
-    return null;
-}
 
+    let randomIndex = availableCells[Math.floor(Math.random() * availableCells.length)];
+    return [randomIndex, newLastSuccessfulAttempt];
+}
 
 module.exports = {
     chooseCell
