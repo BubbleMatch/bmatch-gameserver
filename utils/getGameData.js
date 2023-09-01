@@ -246,6 +246,18 @@ async function getLinkedUsersWithWebSocket(redisClient, socketId) {
     return lobbyID;
 }
 
+async function updateUsersWSAtLobbyData(redisClient, lobbyData, userFromJWT){
+    lobbyData.userWS = lobbyData.userWS || [];
+    const userIndex = lobbyData.userWS.findIndex(u => u.id === userFromJWT.id);
+    if (userIndex !== -1) {
+        lobbyData.userWS[userIndex].ws = socket.id;
+    } else {
+        lobbyData.userWS.push({ id: userFromJWT.id, ws: socket.id });
+    }
+    await redisClient.hSet(`Game:${data.gameUUID}`, 'LobbyData', JSON.stringify(lobbyData));
+
+}
+
 module.exports = {
     getGamePlayers,
     setUserJWT_UUID_Cache,
@@ -274,5 +286,6 @@ module.exports = {
     addGameWebSocketsGuestsToRedis,
     getGameWebSocketsGuestsFromRedis,
     linkUserWithWebSocket,
-    getLinkedUsersWithWebSocket
+    getLinkedUsersWithWebSocket,
+    updateUsersWSAtLobbyData
 }

@@ -24,7 +24,7 @@ const {
     getGameWebSocketsFromRedis,
     addGameWebSocketsGuestsToRedis,
     linkUserWithWebSocket,
-    getLinkedUsersWithWebSocket, getGameWebSocketsGuestsFromRedis,
+    getLinkedUsersWithWebSocket, getGameWebSocketsGuestsFromRedis, updateUsersWSAtLobbyData,
 } = require("../utils/getGameData");
 const {
     extractAndVerifyJWT, emitSystemMessage, checkLobbyProperties,
@@ -55,6 +55,7 @@ async function handleUserAuthentication(io, data, socket, redisClient, consul) {
     }
 
     await setUserJWT_UUID_Cache(redisClient, data.token, data.gameUUID, socket.id, userFromJWT.id);
+    await updateUsersWSAtLobbyData(redisClient, lobbyData, userFromJWT);
     await addGameJWTsToRedis(redisClient, data.gameUUID, data.token);
 
     return currentUser;
@@ -76,16 +77,7 @@ async function authenticateNewUser(io, data, socket, redisClient, consul) {
     //add players ws
     await addGameWebSocketsToRedis(redisClient, data.gameUUID, socket.id)
 
-
-    lobbyData.userWS = lobbyData.userWS || [];
-    const userIndex = lobbyData.userWS.findIndex(u => u.id === userFromJWT.id);
-    if (userIndex !== -1) {
-        lobbyData.userWS[userIndex].ws = socket.id;
-    } else {
-        lobbyData.userWS.push({ id: userFromJWT.id, ws: socket.id });
-    }
-
-    await redisClient.hSet(`Game:${data.gameUUID}`, 'LobbyData', JSON.stringify(lobbyData));
+    await updateUsersWSAtLobbyData(redisClient, lobbyData, userFromJWT);
 
     return userFromJWT.id;
 }
@@ -146,18 +138,18 @@ function disconnectServer(io, socket, redisClient) {
 
         try {
             let currentGameUUID = await getLinkedUsersWithWebSocket(redisClient, socket.id);
-            let lobbyData = await fetchLobbyDataAndPlayers(redisClient, currentGameUUID);
-            let excludeCurrentSocketId = lobbyData.players.filter(player => player.ws !== socket.id);
 
             if (currentGameUUID == null) {
                 throw new Error("Not able to parse lobby-id");
             }
 
+            let lobbyData = await getLobbyData(redisClient, currentGameUUID);
+
             let playersWS = await getGameWebSocketsFromRedis(redisClient, currentGameUUID );
             let guestsWS = await getGameWebSocketsGuestsFromRedis(redisClient, currentGameUUID);
 
-            console.log(playersWS);
-            console.log(guestsWS);
+            let diff = playersWS.filter(s => s !== socket.id);
+
 
         } catch (e) {
             emitSystemMessage(io, socket, e.message);
