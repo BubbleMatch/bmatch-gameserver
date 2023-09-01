@@ -18,14 +18,24 @@ const {
     setNextPlayer,
     setBotLastSuccessfulAttempt,
     emitOpenBubbles,
-    emitCloseBubbles, addGameJWTsToRedis, addGameWebSocketsToRedis,
+    emitCloseBubbles,
+    addGameJWTsToRedis,
+    addGameWebSocketsToRedis,
+    getGameWebSocketsFromRedis,
+    addGameWebSocketsGuestsToRedis,
+    linkUserWithWebSocket,
+    getLinkedUsersWithWebSocket, getGameWebSocketsGuestsFromRedis,
 } = require("../utils/getGameData");
-const {extractAndVerifyJWT, emitSystemMessage, checkLobbyProperties} = require("../utils/getLobbyData");
+const {
+    extractAndVerifyJWT, emitSystemMessage, checkLobbyProperties,
+} = require("../utils/getLobbyData");
 const {chooseCell} = require("../gameLogic/pseudoRandomBotLogic");
-
 
 async function handleUserAuthentication(io, data, socket, redisClient, consul) {
     const currentUser = await getUserJWTCache(redisClient, data.token);
+
+    // all users ws
+    await linkUserWithWebSocket(redisClient, data.gameUUID, socket.id);
 
     if (!currentUser) {
         return await authenticateNewUser(io, data, socket, redisClient, consul);
@@ -40,11 +50,13 @@ async function handleUserAuthentication(io, data, socket, redisClient, consul) {
     const lobbyData = await getLobbyData(redisClient, data.gameUUID);
     const isGamePlayer = lobbyData.players.includes(userFromJWT.id);
 
-    if (!isGamePlayer) return false;
+    if (!isGamePlayer) {
+        return false;
+    }
 
     await setUserJWT_UUID_Cache(redisClient, data.token, data.gameUUID, socket.id, userFromJWT.id);
     await addGameJWTsToRedis(redisClient, data.gameUUID, data.token);
-    await addGameWebSocketsToRedis(redisClient, data.gameUUID, socket.id)
+
     return currentUser;
 }
 
@@ -52,10 +64,28 @@ async function authenticateNewUser(io, data, socket, redisClient, consul) {
     const lobbyData = await getLobbyData(redisClient, data.gameUUID);
     const userFromJWT = await extractAndVerifyJWT(data.token, consul, redisClient);
 
-    if (!lobbyData.players.includes(userFromJWT.id)) return false;
+    if (!lobbyData.players.includes(userFromJWT.id)){
+        //only guests ws
+        await addGameWebSocketsGuestsToRedis(redisClient, data.gameUUID, socket.id);
+        return false
+    }
 
     await setUserJWT_UUID_Cache(redisClient, data.token, data.gameUUID, socket.id, userFromJWT.id);
     await incrementReadyPlayers(redisClient, data.gameUUID);
+
+    //add players ws
+    await addGameWebSocketsToRedis(redisClient, data.gameUUID, socket.id)
+
+
+    lobbyData.userWS = lobbyData.userWS || [];
+    const userIndex = lobbyData.userWS.findIndex(u => u.id === userFromJWT.id);
+    if (userIndex !== -1) {
+        lobbyData.userWS[userIndex].ws = socket.id;
+    } else {
+        lobbyData.userWS.push({ id: userFromJWT.id, ws: socket.id });
+    }
+
+    await redisClient.hSet(`Game:${data.gameUUID}`, 'LobbyData', JSON.stringify(lobbyData));
 
     return userFromJWT.id;
 }
@@ -71,7 +101,8 @@ function joinServer(io, socket, consul, redisClient) {
 
             if (!data.token) {
                 const actionPointer = getActionPointer(redisClient, data.gameUUID)
-                const action = await getAction(redisClient, data.gameUUID, actionPointer);
+                const action = await getAction(redisClient, data.gameUUID, actionPointer-2);
+                console.log(action);
                 if (action) io.to(socket.id).emit("gameAction", action);
                 return;
             }
@@ -80,7 +111,9 @@ function joinServer(io, socket, consul, redisClient) {
 
             if (!currentUserId) {
                 // Guest handler
-                const action = await getAction(redisClient, data.gameUUID);
+                const actionPointer = getActionPointer(redisClient, data.gameUUID)
+                const action = await getAction(redisClient, data.gameUUID, actionPointer-2);
+                console.log(action);
                 if (action) io.to(socket.id).emit("gameAction", action);
                 return;
             }
@@ -110,8 +143,25 @@ function joinServer(io, socket, consul, redisClient) {
 
 function disconnectServer(io, socket, redisClient) {
     socket.on('disconnect', async () => {
-// TODO: emit openBubble only for 4 person, exclude others
 
+        try {
+            let currentGameUUID = await getLinkedUsersWithWebSocket(redisClient, socket.id);
+            let lobbyData = await fetchLobbyDataAndPlayers(redisClient, currentGameUUID);
+            let excludeCurrentSocketId = lobbyData.players.filter(player => player.ws !== socket.id);
+
+            if (currentGameUUID == null) {
+                throw new Error("Not able to parse lobby-id");
+            }
+
+            let playersWS = await getGameWebSocketsFromRedis(redisClient, currentGameUUID );
+            let guestsWS = await getGameWebSocketsGuestsFromRedis(redisClient, currentGameUUID);
+
+            console.log(playersWS);
+            console.log(guestsWS);
+
+        } catch (e) {
+            emitSystemMessage(io, socket, e.message);
+        }
     });
 }
 
@@ -139,8 +189,10 @@ function openedBubble(io, socket, consul, redisClient) {
                 let nextPlayer = await setNextPlayer(redisClient, consul, data.gameUUID, userAuth);
                 io.to(data.gameUUID).emit('currentPlayer', nextPlayer);
 
-                return
+                return;
             }
+
+            await setPaused(redisClient, data.gameUUID, 'true');
 
             let actionPointer = await getActionPointer(redisClient, data.gameUUID);
 
@@ -189,6 +241,8 @@ function openedBubble(io, socket, consul, redisClient) {
             await setAction(redisClient, data.gameUUID, incrementedActionPointer, action);
             await setActionPointer(redisClient, data.gameUUID, incrementedActionPointer);
 
+            await setPaused(redisClient, data.gameUUID, 'false');
+
             let nextPlayer = await getCurrentGamePlayer(redisClient, data.gameUUID);
 
             if (nextPlayer.type === "Bot") {
@@ -211,6 +265,31 @@ function openedBubble(io, socket, consul, redisClient) {
             emitSystemMessage(io, socket, e.message);
         }
     })
+}
+
+function chatMessage(io, socket, consul, redisClient) {
+    socket.on("chatMessage", async (data) => {
+        try {
+            if (data.message.length < 1) return;
+            if (!data.gameUUID) return;
+
+            let userAuth = await handleUserAuthentication(io, data, socket, redisClient, consul);
+
+            let userSockets = await getGameWebSocketsFromRedis(redisClient, data.gameUUID);
+
+            if (!userSockets.includes(socket.id)) {
+                io.to(socket.id).emit('receiveMessage', {message: "nobody hears you ;(", username: "System"});
+                return;
+            }
+
+            for (const userSocketId of userSockets) {
+                io.to(userSocketId).emit('receiveMessage', {message: data.message, username: data.username});
+            }
+
+        } catch (e) {
+            emitSystemMessage(io, socket, e.message);
+        }
+    });
 }
 
 async function performBotActions(io, redisClient, consul, data) {
@@ -289,8 +368,14 @@ async function performBotActions(io, redisClient, consul, data) {
 }
 
 
+function ping(socket, io) {
+    socket.on("ping", () => {
+        io.to(socket.id).emit("pong");
+    });
+}
+
 function randomSleep(min, max) {
     return new Promise(resolve => setTimeout(resolve, Math.random() * (max - min) + min));
 }
 
-module.exports = {joinServer, disconnectServer, openedBubble}
+module.exports = {joinServer, disconnectServer, openedBubble, chatMessage, ping}

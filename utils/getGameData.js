@@ -198,21 +198,53 @@ async function getGameJWTFromRedis(redisClient, gameUUID) {
     return userJWTsStr ? JSON.parse(userJWTsStr) : [];
 }
 
-async function addGameWebSocketsToRedis(redisClient, gameUUID, token) {
+/**
+ * Adds a game's web socket wsId to a Redis store
+ * using for send OpenBubble and closeBubble actions
+ */
+
+async function addGameWebSocketsToRedis(redisClient, gameUUID, wsId) {
     let userWebSockets = await getGameWebSocketsFromRedis(redisClient, gameUUID)
 
-    if (!userWebSockets.includes(token)) {
-        userWebSockets.push(token);
-        await redisClient.hSet(`Game:${gameUUID}`, `UserSockets`, JSON.stringify(userWebSockets));
+    if (!userWebSockets.includes(wsId)) {
+        userWebSockets.push(wsId);
+        await redisClient.hSet(`Game:${gameUUID}`, `PlayersSockets`, JSON.stringify(userWebSockets));
     }
 }
 
 async function getGameWebSocketsFromRedis(redisClient, gameUUID) {
-    let userWebSockets = await redisClient.hGet(`Game:${gameUUID}`, `UserSockets`);
+    let userWebSockets = await redisClient.hGet(`Game:${gameUUID}`, `PlayersSockets`);
     return userWebSockets ? JSON.parse(userWebSockets) : [];
 }
 
+/**
+ * Adds a game's web socket wsId to a Redis store
+ * using for send guests actions
+ */
 
+async function addGameWebSocketsGuestsToRedis(redisClient, gameUUID, wsId) {
+    let userWebSockets = await getGameWebSocketsGuestsFromRedis(redisClient, gameUUID)
+
+    if (!userWebSockets.includes(wsId)) {
+        userWebSockets.push(wsId);
+        await redisClient.hSet(`Game:${gameUUID}`, `GuestsSockets`, JSON.stringify(userWebSockets));
+    }
+}
+
+async function getGameWebSocketsGuestsFromRedis(redisClient, gameUUID) {
+    let userWebSockets = await redisClient.hGet(`Game:${gameUUID}`, `GuestsSockets`);
+    return userWebSockets ? JSON.parse(userWebSockets) : [];
+}
+
+async function linkUserWithWebSocket(redisClient, gameUUID, wsId) {
+    await redisClient.hSet(`GameWS:${wsId}`, "gameUUID", gameUUID);
+}
+
+async function getLinkedUsersWithWebSocket(redisClient, socketId) {
+    const lobbyID = await redisClient.hGet(`GameWS:${socketId}`, "gameUUID");
+    if (!lobbyID) return null;
+    return lobbyID;
+}
 
 module.exports = {
     getGamePlayers,
@@ -238,5 +270,9 @@ module.exports = {
     addGameJWTsToRedis,
     getGameJWTFromRedis,
     addGameWebSocketsToRedis,
-    getGameWebSocketsFromRedis
+    getGameWebSocketsFromRedis,
+    addGameWebSocketsGuestsToRedis,
+    getGameWebSocketsGuestsFromRedis,
+    linkUserWithWebSocket,
+    getLinkedUsersWithWebSocket
 }
