@@ -2,6 +2,7 @@ const {getPostgresConfig} = require("../config/config");
 const {fetchUserById} = require("./getPostgresqlUserData");
 const consul = require("consul");
 const {setNextPlayerId} = require("../gameLogic/queue");
+const util = require("util");
 
 const getUserFromRedisByUserId = async (redisClient, consul, userId) => {
 
@@ -240,22 +241,36 @@ async function linkUserWithWebSocket(redisClient, gameUUID, wsId) {
     await redisClient.hSet(`GameWS:${wsId}`, "gameUUID", gameUUID);
 }
 
-async function getLinkedUsersWithWebSocket(redisClient, socketId) {
-    const lobbyID = await redisClient.hGet(`GameWS:${socketId}`, "gameUUID");
-    if (!lobbyID) return null;
-    return lobbyID;
+async function getLinkedUsersWithWebSocket(redisClient, wsId) {
+    let userWebSockets = await redisClient.hGet(`GameWS:${wsId}`, `gameUUID`);
+    return userWebSockets ? JSON.parse(userWebSockets) : [];
 }
 
-async function updateUsersWSAtLobbyData(redisClient, lobbyData, userFromJWT){
+async function removeTimer(redisClient, gameUUID) {
+    await redisClient.del(`Game:${gameUUID}:Timer`, (err) => {
+        if (err) console.error(`Failed to delete key Game:${gameUUID}:Timer`);
+    });
+}
+
+async function setTimer(redisClient, time, gameUUID) {
+    await redisClient.setEx(`Game:${gameUUID}:Timer`, time, 'active');
+}
+
+async function getTimerTTL(redisClient, gameUUID) {
+    return await redisClient.ttl(`Game:${gameUUID}:Timer`);
+}
+
+async function updateUsersWSAtLobbyData(redisClient, lobbyData, userFromJWT, socketId, gameUUID) {
     lobbyData.userWS = lobbyData.userWS || [];
     const userIndex = lobbyData.userWS.findIndex(u => u.id === userFromJWT.id);
-    if (userIndex !== -1) {
-        lobbyData.userWS[userIndex].ws = socket.id;
-    } else {
-        lobbyData.userWS.push({ id: userFromJWT.id, ws: socket.id });
-    }
-    await redisClient.hSet(`Game:${data.gameUUID}`, 'LobbyData', JSON.stringify(lobbyData));
 
+    if (userIndex !== -1) {
+        lobbyData.userWS[userIndex].ws = socketId;
+    } else {
+        lobbyData.userWS.push({id: userFromJWT.id, ws: socketId});
+    }
+
+    await redisClient.hSet(`Game:${gameUUID}`, 'LobbyData', JSON.stringify(lobbyData));
 }
 
 module.exports = {
@@ -286,6 +301,9 @@ module.exports = {
     addGameWebSocketsGuestsToRedis,
     getGameWebSocketsGuestsFromRedis,
     linkUserWithWebSocket,
+    updateUsersWSAtLobbyData,
+    getTimerTTL,
     getLinkedUsersWithWebSocket,
-    updateUsersWSAtLobbyData
+    removeTimer,
+    setTimer
 }

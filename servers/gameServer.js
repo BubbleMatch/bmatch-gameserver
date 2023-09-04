@@ -1,7 +1,7 @@
 const https = require('https');
 const http = require('http');
 const { Server } = require("socket.io");
-const {joinServer, disconnectServer, openedBubble, chatMessage, ping} = require("../sockets/gamews");
+const {joinServer, disconnectServer, openedBubble, chatMessage, ping, initExpirationSubscriber} = require("../sockets/gamews");
 
 const useTLS = process.env.USE_TLS;
 
@@ -17,7 +17,9 @@ function startGameServer(app, options, consul, redisClient) {
         }
     });
 
-    io.on('connection', socket => {
+    initExpirationSubscriber(redisClient, io);
+
+    io.on('connection', async socket => {
         joinServer(io, socket, consul, redisClient);
         disconnectServer(io, socket, redisClient);
         openedBubble(io, socket, consul, redisClient);
