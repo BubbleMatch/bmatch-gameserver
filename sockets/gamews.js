@@ -24,7 +24,11 @@ const {
     getGameWebSocketsFromRedis,
     addGameWebSocketsGuestsToRedis,
     linkUserWithWebSocket,
-    getLinkedUsersWithWebSocket, getGameWebSocketsGuestsFromRedis, updateUsersWSAtLobbyData, getTimerTTL, setTimer,
+    getGameUUIDByGameWS,
+    getGameWebSocketsGuestsFromRedis,
+    updateUsersWSAtLobbyData,
+    getTimerTTL,
+    setTimer, getUserPaused, setUserPaused,
 } = require("../utils/getGameData");
 const {
     extractAndVerifyJWT, emitSystemMessage, checkLobbyProperties,
@@ -56,6 +60,7 @@ async function handleUserAuthentication(io, data, socket, redisClient, consul) {
 
     await setUserJWT_UUID_Cache(redisClient, data.token, data.gameUUID, socket.id, userFromJWT.id);
     await updateUsersWSAtLobbyData(redisClient, lobbyData, userFromJWT, socket.id, data.gameUUID);
+    await addGameWebSocketsToRedis(redisClient, data.gameUUID, socket.id);
     await addGameJWTsToRedis(redisClient, data.gameUUID, data.token);
 
     return currentUser;
@@ -139,6 +144,7 @@ function joinServer(io, socket, consul, redisClient) {
             const action = await getAction(redisClient, data.gameUUID, await getActionPointer(redisClient, data.gameUUID));
             if (action) io.to(socket.id).emit("gameAction", action);
 
+            await performBotActions(io, redisClient, consul, data);
         } catch (ex) {
             console.log(ex);
             emitSystemMessage(io, socket, ex.message);
@@ -146,22 +152,28 @@ function joinServer(io, socket, consul, redisClient) {
     });
 }
 
-function disconnectServer(io, socket, redisClient) {
+function disconnectServer(io, socket, redisClient, consul) {
     socket.on('disconnect', async () => {
 
         try {
-            let currentGameUUID = await getLinkedUsersWithWebSocket(redisClient, socket.id);
+            let currentGameUUID = await getGameUUIDByGameWS(redisClient, socket.id);
 
             if (currentGameUUID == null) {
                 throw new Error("Not able to parse lobby-id");
             }
 
+            await redisClient.del(`GameWS:${socket.id}`);
+
             let lobbyData = await getLobbyData(redisClient, currentGameUUID);
 
-            let playersWS = await getGameWebSocketsFromRedis(redisClient, currentGameUUID);
-            let guestsWS = await getGameWebSocketsGuestsFromRedis(redisClient, currentGameUUID);
+            let userLeftId = lobbyData.userWS.filter(s => s.ws === socket.id).map(u => u.id);
 
-            let diff = playersWS.filter(s => s !== socket.id);
+            if (!userLeftId) {
+                // todo :idk map again ws
+                return;
+            }
+
+            let leftUser = await getUserFromRedisByUserId(redisClient, consul, userLeftId);
 
 
         } catch (e) {
@@ -263,7 +275,13 @@ function openedBubble(io, socket, consul, redisClient) {
 
 
             let playersWS = await getGameWebSocketsFromRedis(redisClient, data.gameUUID);
-            let timerTTL = await getTimerTTL()
+
+            //todo : fix
+            //todo: add audit
+            //todo: add timer
+
+
+         //   let timerTTL = await getTimerTTL()
 
             for (const userSocketId of playersWS) {
                 //     io.to(userSocketId).emit('setTimer', {gett});
@@ -405,8 +423,52 @@ function ping(socket, io) {
     });
 }
 
+function userPause(io, socket, consul, redisClient) {
+    socket.on('userPause', async (data) => {
+        if (!data.gameUUID) return;
+
+        try {
+            let userAuth = await handleUserAuthentication(io, data, socket, redisClient, consul);
+
+            let userPausedData = await getUserPaused(redisClient, data.gameUUID);
+            let isPaused = userPausedData.paused;
+
+            if(!isPaused) {
+                let pausedTime = new Date(userPausedData.time);
+                let currentTime = new Date();
+                let timeDifference = (currentTime - pausedTime) / 1000;
+                
+                if(timeDifference < 5  * 60) {
+                    let remainingTime = 5 * 60 - timeDifference;
+
+                    let minutesLeft = Math.floor(remainingTime / 60);
+                    let secondsLeft = Math.floor(remainingTime % 60);
+
+                    let timeLeftFormatted = `${String(minutesLeft).padStart(2, '0')}:${String(secondsLeft).padStart(2, '0')}`;
+
+                    io.to(socket.id).emit('receiveMessage', {message: `Cannot pause again within 5 minutes. Wait for ${timeLeftFormatted} more.`, username: "System"});
+
+                    return;
+                }
+
+            }
+
+            isPaused = !isPaused;
+            let userPaused = isPaused ? "true" : "false";
+
+            await setUserPaused(redisClient, data.gameUUID, userPaused);
+            io.to(data.gameUUID).emit('isPaused', {
+                time: new Date().toISOString(),
+                paused: userPaused
+            });
+        } catch (e) {
+
+        }
+    });
+}
+
 function randomSleep(min, max) {
     return new Promise(resolve => setTimeout(resolve, Math.random() * (max - min) + min));
 }
 
-module.exports = {joinServer, disconnectServer, openedBubble, chatMessage, ping, initExpirationSubscriber}
+module.exports = {joinServer, disconnectServer, openedBubble, chatMessage, ping, initExpirationSubscriber, userPause}

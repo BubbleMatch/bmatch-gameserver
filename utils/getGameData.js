@@ -142,6 +142,24 @@ async function setPaused(redisClient, uuid, flag) {
     await redisClient.hSet(`Game:${uuid}`, `GamePaused`, flag);
 }
 
+
+async function getUserPaused(redisClient, uuid) {
+    let dataRaw = await redisClient.hGet(`Game:${uuid}`, `GameUserPaused`);
+    let data = JSON.parse(dataRaw);
+    return {
+        time: data ? data.time : null,
+        paused: data ? data.paused === 'true' : false
+    };
+}
+
+async function setUserPaused(redisClient, uuid, flag) {
+    let data = {
+        time: new Date().toISOString(),
+        paused: flag
+    };
+    await redisClient.hSet(`Game:${uuid}`, `GameUserPaused`, JSON.stringify(data));
+}
+
 async function setBotLastSuccessfulAttempt(redisClient, gameUUID, botId, newValue) {
     const lobbyData = await getLobbyData(redisClient, gameUUID);
 
@@ -241,9 +259,8 @@ async function linkUserWithWebSocket(redisClient, gameUUID, wsId) {
     await redisClient.hSet(`GameWS:${wsId}`, "gameUUID", gameUUID);
 }
 
-async function getLinkedUsersWithWebSocket(redisClient, wsId) {
-    let userWebSockets = await redisClient.hGet(`GameWS:${wsId}`, `gameUUID`);
-    return userWebSockets ? JSON.parse(userWebSockets) : [];
+async function getGameUUIDByGameWS(redisClient, wsId) {
+    return await redisClient.hGet(`GameWS:${wsId}`, `gameUUID`);
 }
 
 async function removeTimer(redisClient, gameUUID) {
@@ -303,7 +320,9 @@ module.exports = {
     linkUserWithWebSocket,
     updateUsersWSAtLobbyData,
     getTimerTTL,
-    getLinkedUsersWithWebSocket,
+    getGameUUIDByGameWS,
     removeTimer,
-    setTimer
+    setTimer,
+    getUserPaused,
+    setUserPaused
 }
