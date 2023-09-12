@@ -1,8 +1,5 @@
 const {
-    getUserJWTCache,
-    setUserJWT_UUID_Cache,
     getLobbyData,
-    incrementReadyPlayers,
     getGamePlayers,
     getCurrentGamePlayer,
     setCurrentGamePlayer,
@@ -19,77 +16,42 @@ const {
     setBotLastSuccessfulAttempt,
     emitOpenBubbles,
     emitCloseBubbles,
-    addGameJWTsToRedis,
-    addGameWebSocketsToRedis,
     getGameWebSocketsFromRedis,
-    addGameWebSocketsGuestsToRedis,
-    linkUserWithWebSocket,
     getGameUUIDByGameWS,
-    getGameWebSocketsGuestsFromRedis,
-    updateUsersWSAtLobbyData,
     getTimerTTL,
-    setTimer, getUserPaused, setUserPaused,
+    setTimer, getUserPaused, setUserPaused, getRemainingTime,
 } = require("../utils/getGameData");
 const {
-    extractAndVerifyJWT, emitSystemMessage, checkLobbyProperties,
+    emitSystemMessage, checkLobbyProperties,
 } = require("../utils/getLobbyData");
-const {chooseCell} = require("../gameLogic/pseudoRandomBotLogic");
+const {chooseCell, randomSleep, performBotActions} = require("../gameLogic/pseudoRandomBotLogic");
+const {handleUserAuthentication} = require("../utils/userAuth");
 
-async function handleUserAuthentication(io, data, socket, redisClient, consul) {
-    const currentUser = await getUserJWTCache(redisClient, data.token);
+async function setupRabbitMQ(rabbitMQChannel) {
+    const exchangeName = "game_events";
+    const dlxName = "expired_game_events";
 
-    // all users ws
-    await linkUserWithWebSocket(redisClient, data.gameUUID, socket.id);
+    await rabbitMQChannel.assertExchange(exchangeName, "topic", {durable: true});
+    await rabbitMQChannel.assertExchange(dlxName, "fanout", {durable: true});
 
-    if (!currentUser) {
-        return await authenticateNewUser(io, data, socket, redisClient, consul);
-    }
+    await rabbitMQChannel.assertQueue("game_timer", {
+        deadLetterExchange: dlxName,
+        messageTtl: 30000,
+    });
 
-    if (currentUser.UUID !== data.gameUUID) {
-        io.to(socket.id).emit("userAlreadyInGame", data.gameUUID);
-        return false;
-    }
-
-    const userFromJWT = await extractAndVerifyJWT(data.token, consul, redisClient);
-    const lobbyData = await getLobbyData(redisClient, data.gameUUID);
-    const isGamePlayer = lobbyData.players.includes(userFromJWT.id);
-
-    if (!isGamePlayer) {
-        return false;
-    }
-
-    await setUserJWT_UUID_Cache(redisClient, data.token, data.gameUUID, socket.id, userFromJWT.id);
-    await updateUsersWSAtLobbyData(redisClient, lobbyData, userFromJWT, socket.id, data.gameUUID);
-    await addGameWebSocketsToRedis(redisClient, data.gameUUID, socket.id);
-    await addGameJWTsToRedis(redisClient, data.gameUUID, data.token);
-
-    return currentUser;
+    await rabbitMQChannel.assertQueue("expired_events");
+    await rabbitMQChannel.bindQueue("expired_events", dlxName, "#");
 }
 
-async function authenticateNewUser(io, data, socket, redisClient, consul) {
-    let lobbyData = await getLobbyData(redisClient, data.gameUUID);
-    const userFromJWT = await extractAndVerifyJWT(data.token, consul, redisClient);
-
-    if (!lobbyData.players.includes(userFromJWT.id)) {
-        //only guests ws
-        await addGameWebSocketsGuestsToRedis(redisClient, data.gameUUID, socket.id);
-        return false
-    }
-
-    await setUserJWT_UUID_Cache(redisClient, data.token, data.gameUUID, socket.id, userFromJWT.id);
-    await incrementReadyPlayers(redisClient, data.gameUUID);
-
-    lobbyData = await getLobbyData(redisClient, data.gameUUID);
-
-    //add players ws
-    await addGameWebSocketsToRedis(redisClient, data.gameUUID, socket.id)
-
-    await updateUsersWSAtLobbyData(redisClient, lobbyData, userFromJWT, socket.id, data.gameUUID);
-
-    return userFromJWT.id;
+async function listenForExpiredMessages(rabbitMQChannel) {
+    await rabbitMQChannel.consume("expired_events", (message) => {
+        const gameUUID = message.content.toString();
+        console.log(gameUUID);
+        rabbitMQChannel.ack(message);
+    });
 }
 
-function joinServer(io, socket, consul, redisClient) {
+function joinServer(io, socket, consul, redisClient, rabbitMQChannel) {
     socket.on('join', async (data) => {
         try {
             if (!data.gameUUID) return;
@@ -124,22 +86,19 @@ function joinServer(io, socket, consul, redisClient) {
             await setPaused(redisClient, data.gameUUID, 'false');
 
             let currentGamePlayer = await getCurrentGamePlayer(redisClient, data.gameUUID);
-            let timerTTL = await getTimerTTL(redisClient, data.gameUUID)
 
             if (!currentGamePlayer) {
                 await setCurrentGamePlayer(redisClient, data.gameUUID, currentGamePlayers[0])
                 currentGamePlayer = currentGamePlayers[0];
 
-                if (timerTTL === -1 || timerTTL === -2) {
-                    let timer = await setTimer(redisClient, 30, data.gameUUID);
-                    io.to(data.gameUUID).emit('timeRequested', timer);
-                }
+                await setTimer(rabbitMQChannel, redisClient, data.gameUUID, 30);
+                io.to(data.gameUUID).emit('timeRequested', 30);
+            } else {
+                const remainingTime = await getRemainingTime(redisClient, data.gameUUID, 30);
+                io.to(data.gameUUID).emit('timeRequested', parseInt(remainingTime));
             }
 
             io.to(data.gameUUID).emit('currentPlayer', currentGamePlayer);
-            timerTTL = await getTimerTTL(redisClient, data.gameUUID);
-
-            io.to(data.gameUUID).emit('timeRequested', timerTTL);
 
             const action = await getAction(redisClient, data.gameUUID, await getActionPointer(redisClient, data.gameUUID));
             if (action) io.to(socket.id).emit("gameAction", action);
@@ -181,25 +140,6 @@ function disconnectServer(io, socket, redisClient, consul) {
         }
     });
 }
-
-function initExpirationSubscriber(redisClient) {
-    (async () => {
-        const subscriber = redisClient.duplicate();
-
-        await subscriber.connect();
-
-        await subscriber.subscribe('__keyevent@0__:expired', (message) => {
-            const gameUUIDPattern = /Game:(.*?):Timer/;
-            const match = message.match(gameUUIDPattern);
-
-            if (match && match[1]) {
-                const gameUUID = match[1];
-                console.log(gameUUID);
-            }
-        });
-    })();
-}
-
 
 function openedBubble(io, socket, consul, redisClient) {
     socket.on('sendOpenedBubble', async (data) => {
@@ -281,7 +221,7 @@ function openedBubble(io, socket, consul, redisClient) {
             //todo: add timer
 
 
-         //   let timerTTL = await getTimerTTL()
+            //   let timerTTL = await getTimerTTL()
 
             for (const userSocketId of playersWS) {
                 //     io.to(userSocketId).emit('setTimer', {gett});
@@ -341,82 +281,6 @@ function chatMessage(io, socket, consul, redisClient) {
     });
 }
 
-async function performBotActions(io, redisClient, consul, data) {
-    let nextPlayer = await getCurrentGamePlayer(redisClient, data.gameUUID);
-
-    while (nextPlayer.type === "Bot") {
-        let botAp = await getActionPointer(redisClient, data.gameUUID);
-        let chCellBotAction = await getAction(redisClient, data.gameUUID, botAp);
-
-        if (chCellBotAction.openBubbles.length === 100) {
-            console.log(chCellBotAction.openBubbles.length);
-            return;
-        }
-
-        let nextTry = false;
-
-        await randomSleep(1000, 2000);
-
-        let gameArea = await getGameArea(redisClient, data.gameUUID);
-
-        const [botSelect1, newLastSuccessfulAttempt1] = chooseCell(chCellBotAction.openBubbles, gameArea, nextPlayer.lastSuccessfulAttempt);
-        const [botSelect2, newLastSuccessfulAttempt2] = chooseCell(chCellBotAction.openBubbles, gameArea, newLastSuccessfulAttempt1, gameArea[Number(botSelect1)], botSelect1);
-
-        await randomSleep(200, 1000);
-        await emitOpenBubbles(io, data.gameUUID, Number(botSelect1), Number(gameArea[Number(botSelect1)]));
-
-        await randomSleep(200, 1000);
-        await emitOpenBubbles(io, data.gameUUID, Number(botSelect2), Number(gameArea[Number(botSelect2)]));
-
-        await setBotLastSuccessfulAttempt(redisClient, data.gameUUID, nextPlayer.id, newLastSuccessfulAttempt2);
-
-        let botActionPointer = await getActionPointer(redisClient, data.gameUUID);
-
-        let botLastAction = await getAction(redisClient, data.gameUUID, botActionPointer);
-
-        if (botLastAction && botLastAction.openBubbles.length === 100) {
-            await setPaused(redisClient, data.gameUUID, 'true');
-            io.to(data.gameUUID).emit('gameOver');
-            return;
-        }
-
-        let previousOpenBubbles = botLastAction ? botLastAction.openBubbles : [];
-
-        let incrementedBotActionPointer = ++botActionPointer;
-        await setActionPointer(redisClient, data.gameUUID, incrementedBotActionPointer);
-
-        let botAction = {
-            openBubbles: [...previousOpenBubbles], requestedBubbles: [{
-                bubbleId: Number(botSelect1), bubbleImg: Number(gameArea[Number(botSelect1)])
-            }, {
-                bubbleId: Number(botSelect2), bubbleImg: Number(gameArea[Number(botSelect2)])
-            }], sender: nextPlayer, serverTime: new Date().toISOString()
-        }
-
-        if (gameArea[botSelect1] !== gameArea[botSelect2]) {
-            await randomSleep(1000, 2000);
-
-            await emitCloseBubbles(io, data.gameUUID, Number(botSelect1), Number(botSelect2))
-        } else {
-            botAction.openBubbles.push({bubbleId: botSelect1, bubbleImg: gameArea[botSelect1]}, {
-                bubbleId: botSelect2, bubbleImg: gameArea[botSelect2]
-            });
-
-            nextTry = true;
-        }
-
-        await setAction(redisClient, data.gameUUID, incrementedBotActionPointer, botAction);
-
-        await randomSleep(1000, 2500);
-
-        if (!nextTry) {
-            nextPlayer = await setNextPlayer(redisClient, consul, data.gameUUID, nextPlayer);
-            io.to(data.gameUUID).emit('currentPlayer', nextPlayer);
-        }
-    }
-}
-
-
 function ping(socket, io) {
     socket.on("ping", () => {
         io.to(socket.id).emit("pong");
@@ -433,12 +297,12 @@ function userPause(io, socket, consul, redisClient) {
             let userPausedData = await getUserPaused(redisClient, data.gameUUID);
             let isPaused = userPausedData.paused;
 
-            if(!isPaused) {
+            if (!isPaused) {
                 let pausedTime = new Date(userPausedData.time);
                 let currentTime = new Date();
                 let timeDifference = (currentTime - pausedTime) / 1000;
-                
-                if(timeDifference < 5  * 60) {
+
+                if (timeDifference < 5 * 60) {
                     let remainingTime = 5 * 60 - timeDifference;
 
                     let minutesLeft = Math.floor(remainingTime / 60);
@@ -446,7 +310,10 @@ function userPause(io, socket, consul, redisClient) {
 
                     let timeLeftFormatted = `${String(minutesLeft).padStart(2, '0')}:${String(secondsLeft).padStart(2, '0')}`;
 
-                    io.to(socket.id).emit('receiveMessage', {message: `Cannot pause again within 5 minutes. Wait for ${timeLeftFormatted} more.`, username: "System"});
+                    io.to(socket.id).emit('receiveMessage', {
+                        message: `Cannot pause again within 5 minutes. Wait for ${timeLeftFormatted} more.`,
+                        username: "System"
+                    });
 
                     return;
                 }
@@ -467,8 +334,14 @@ function userPause(io, socket, consul, redisClient) {
     });
 }
 
-function randomSleep(min, max) {
-    return new Promise(resolve => setTimeout(resolve, Math.random() * (max - min) + min));
-}
 
-module.exports = {joinServer, disconnectServer, openedBubble, chatMessage, ping, initExpirationSubscriber, userPause}
+module.exports = {
+    joinServer,
+    disconnectServer,
+    openedBubble,
+    chatMessage,
+    ping,
+    userPause,
+    listenForExpiredMessages,
+    setupRabbitMQ
+}

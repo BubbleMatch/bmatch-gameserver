@@ -1,8 +1,13 @@
-const user = process.env.POSTGRES_USER || 'bmatch';
-const password = process.env.POSTGRES_PASSWORD || 'newpassword';
-const database = process.env.POSTGRES_DB || 'bmatch';
+const postgreSQLUser = process.env.POSTGRES_USER || 'bmatch';
+const postgreSQLPassword = process.env.POSTGRES_PASSWORD || 'newpassword';
+const postgreSQLDatabase = process.env.POSTGRES_DB || 'bmatch';
+
+const rabbitMQUser = process.env.POSTGRES_USER || 'bmatch';
+const rabbitMQPassword = process.env.POSTGRES_PASSWORD || 'newpassword';
+
 const consulHost = process.env.CONSUL_HOST || 'localhost';
 const consulPort = process.env.CONSUL_PORT || '8500';
+
 const JWTToken = process.env.JWT_TOKEN || 'YourSecretKeyShouldBeVerySecureAndNotPublic';
 
 const getPostgresConfig = async (consul) => {
@@ -17,11 +22,29 @@ const getPostgresConfig = async (consul) => {
     return {
         host: postgreSQL.Address,
         port: postgreSQL.ServicePort,
-        user: user,
-        password: password,
-        database: database
+        user: postgreSQLUser,
+        password: postgreSQLPassword,
+        database: postgreSQLDatabase
     };
 };
+
+const getRabbitMQConfig = async (consul) => {
+    let nodes = await consul.catalog.service.nodes('rabbitmq');
+    let consulNode = nodes[0];
+
+    if (consulNode === undefined) {
+        console.log("RabbitMQ service not found in consul");
+        process.exit(0);
+    }
+
+    return {
+        host: consulNode.Address,
+        port: consulNode.ServicePort,
+        user: rabbitMQUser,
+        pass: rabbitMQPassword
+    };
+};
+
 
 const getRedisConfig = async (consul) => {
     let production = await consul.catalog.service.nodes('redis');
@@ -39,5 +62,5 @@ const getRedisConfig = async (consul) => {
 };
 
 module.exports = {
-    user, password, database, consulHost, consulPort, getPostgresConfig, getRedisConfig, JWTToken
+    user: postgreSQLUser, password: postgreSQLPassword, database: postgreSQLDatabase, consulHost, consulPort, getPostgresConfig, getRedisConfig, JWTToken, getRabbitMQConfig
 };

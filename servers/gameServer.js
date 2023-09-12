@@ -1,11 +1,13 @@
 const https = require('https');
 const http = require('http');
 const { Server } = require("socket.io");
-const {joinServer, disconnectServer, openedBubble, chatMessage, ping, initExpirationSubscriber, userPause} = require("../sockets/gamews");
+const {joinServer, disconnectServer, openedBubble, chatMessage, ping, initExpirationSubscriber, userPause,
+    setupRabbitMQ, listenForExpiredMessages
+} = require("../sockets/gamews");
 
 const useTLS = process.env.USE_TLS;
 
-function startGameServer(app, options, consul, redisClient) {
+async function startGameServer(app, options, consul, redisClient, rabbitMQChannel) {
 
     const server = useTLS
         ? https.createServer(options, app)
@@ -17,16 +19,17 @@ function startGameServer(app, options, consul, redisClient) {
         }
     });
 
-    initExpirationSubscriber(redisClient, io);
-
     io.on('connection', async socket => {
-        joinServer(io, socket, consul, redisClient);
+        joinServer(io, socket, consul, redisClient, rabbitMQChannel);
         disconnectServer(io, socket, redisClient, consul);
         openedBubble(io, socket, consul, redisClient);
         chatMessage(io, socket, consul, redisClient);
         ping(socket, io);
         userPause(io, socket, consul, redisClient);
     });
+
+    await setupRabbitMQ(rabbitMQChannel);
+    await listenForExpiredMessages(rabbitMQChannel);
 
     server.listen(8005, () => {
         console.log("Game Socket.IO server is running on 8005");

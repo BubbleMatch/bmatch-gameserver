@@ -16,7 +16,7 @@ const getUserFromRedisByUserId = async (redisClient, consul, userId) => {
         const cfg = await getPostgresConfig(consul);
         userProfile = await fetchUserById(userId, cfg);
 
-        await redisClient.set(userProfileKey, JSON.stringify(userProfile), 'EX', 3600);
+        await redisClient.hSet(userProfileKey, JSON.stringify(userProfile), 'EX', 3600);
     }
 
     return userProfile;
@@ -269,12 +269,27 @@ async function removeTimer(redisClient, gameUUID) {
     });
 }
 
-async function setTimer(redisClient, time, gameUUID) {
-    await redisClient.setEx(`Game:${gameUUID}:Timer`, time, 'active');
+async function setTimer(rabbitMQChannel, redisClient, gameUUID, duration = 30) {
+    const exchangeName = "game_events";
+    const message = JSON.stringify({
+        gameUUID: gameUUID,
+        ttl: duration * 1000
+    });
+    await rabbitMQChannel.publish(exchangeName, "game.timer.set", Buffer.from(message));
+    await rabbitMQChannel.bindQueue("game_timer", exchangeName, "game.timer.set");
+
+    await redisClient.hSet(`Game:${gameUUID}:TimerStart`, "Time", Date.now().toString());
 }
 
-async function getTimerTTL(redisClient, gameUUID) {
-    return await redisClient.ttl(`Game:${gameUUID}:Timer`);
+async function getRemainingTime(redisClient, gameUUID, initialDuration = 30) {
+    const timerStart = await redisClient.hGet(`Game:${gameUUID}:TimerStart`, "Time");
+
+    if (!timerStart) return initialDuration;
+
+    const elapsedTime = (Date.now() - timerStart) / 1000;
+    const remainingTime = initialDuration - elapsedTime;
+
+    return remainingTime > 0 ? remainingTime : 0;
 }
 
 async function updateUsersWSAtLobbyData(redisClient, lobbyData, userFromJWT, socketId, gameUUID) {
@@ -312,16 +327,13 @@ module.exports = {
     emitCloseBubbles,
     emitOpenBubbles,
     addGameJWTsToRedis,
-    getGameJWTFromRedis,
     addGameWebSocketsToRedis,
     getGameWebSocketsFromRedis,
     addGameWebSocketsGuestsToRedis,
-    getGameWebSocketsGuestsFromRedis,
     linkUserWithWebSocket,
     updateUsersWSAtLobbyData,
-    getTimerTTL,
+    getRemainingTime,
     getGameUUIDByGameWS,
-    removeTimer,
     setTimer,
     getUserPaused,
     setUserPaused
