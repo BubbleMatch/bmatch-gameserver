@@ -11,7 +11,7 @@ const {
     setActionPointer,
     emitCloseBubbles,
     setAction,
-    setNextPlayer
+    setNextPlayer, cancelTimer, setTimer
 } = require("../utils/getGameData");
 
 function pseudoRandomChoice(lastSuccessfulAttempt) {
@@ -128,8 +128,6 @@ async function performBotActions(io, redisClient, consul, data) {
         }
 
         await setAction(redisClient, data.gameUUID, incrementedBotActionPointer, botAction);
-
-        await randomSleep(1000, 2500);
 
         if (!nextTry) {
             nextPlayer = await setNextPlayer(redisClient, consul, data.gameUUID, nextPlayer);

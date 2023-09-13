@@ -2,8 +2,8 @@ const postgreSQLUser = process.env.POSTGRES_USER || 'bmatch';
 const postgreSQLPassword = process.env.POSTGRES_PASSWORD || 'newpassword';
 const postgreSQLDatabase = process.env.POSTGRES_DB || 'bmatch';
 
-const rabbitMQUser = process.env.POSTGRES_USER || 'bmatch';
-const rabbitMQPassword = process.env.POSTGRES_PASSWORD || 'newpassword';
+const rabbitMQUser = process.env.RABBITMQ_USER || 'bmatch';
+const rabbitMQPassword = process.env.RABBITMQ_PASSWORD || 'newpassword';
 
 const consulHost = process.env.CONSUL_HOST || 'localhost';
 const consulPort = process.env.CONSUL_PORT || '8500';

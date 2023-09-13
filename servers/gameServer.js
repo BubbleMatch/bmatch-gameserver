@@ -22,14 +22,14 @@ async function startGameServer(app, options, consul, redisClient, rabbitMQChanne
     io.on('connection', async socket => {
         joinServer(io, socket, consul, redisClient, rabbitMQChannel);
         disconnectServer(io, socket, redisClient, consul);
-        openedBubble(io, socket, consul, redisClient);
+        openedBubble(io, socket, consul, redisClient, rabbitMQChannel);
         chatMessage(io, socket, consul, redisClient);
         ping(socket, io);
         userPause(io, socket, consul, redisClient);
     });
 
     await setupRabbitMQ(rabbitMQChannel);
-    await listenForExpiredMessages(rabbitMQChannel);
+    await listenForExpiredMessages(io, redisClient, rabbitMQChannel, consul);
 
     server.listen(8005, () => {
         console.log("Game Socket.IO server is running on 8005");

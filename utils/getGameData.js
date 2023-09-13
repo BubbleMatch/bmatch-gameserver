@@ -30,7 +30,6 @@ async function getGamePlayers(redisClient, consul, gameUUID) {
         throw new Error("No players in the game");
     }
 
-    // todo: fix exception of null
     for (let id of gameData.players) {
         let userFromRedisByUserId = await getUserFromRedisByUserId(redisClient, consul, id);
 
@@ -275,6 +274,7 @@ async function setTimer(rabbitMQChannel, redisClient, gameUUID, duration = 30) {
         gameUUID: gameUUID,
         ttl: duration * 1000
     });
+
     await rabbitMQChannel.publish(exchangeName, "game.timer.set", Buffer.from(message));
     await rabbitMQChannel.bindQueue("game_timer", exchangeName, "game.timer.set");
 
@@ -284,6 +284,8 @@ async function setTimer(rabbitMQChannel, redisClient, gameUUID, duration = 30) {
 async function getRemainingTime(redisClient, gameUUID, initialDuration = 30) {
     const timerStart = await redisClient.hGet(`Game:${gameUUID}:TimerStart`, "Time");
 
+    if(timerStart === 0) return 0;
+
     if (!timerStart) return initialDuration;
 
     const elapsedTime = (Date.now() - timerStart) / 1000;
@@ -291,6 +293,22 @@ async function getRemainingTime(redisClient, gameUUID, initialDuration = 30) {
 
     return remainingTime > 0 ? remainingTime : 0;
 }
+
+async function cancelTimer(redisClient, rabbitMQChannel, gameUUID) {
+    const message = await rabbitMQChannel.get("game_timer");
+
+    if (message) {
+        const content = JSON.parse(message.content.toString());
+
+        if (content.gameUUID === gameUUID) {
+            rabbitMQChannel.nack(message, false, true);
+            await redisClient.hSet(`Game:${gameUUID}:TimerStart`, "Time", 0);
+        } else {
+            rabbitMQChannel.ack(message);
+        }
+    }
+}
+
 
 async function updateUsersWSAtLobbyData(redisClient, lobbyData, userFromJWT, socketId, gameUUID) {
     lobbyData.userWS = lobbyData.userWS || [];
@@ -336,5 +354,7 @@ module.exports = {
     getGameUUIDByGameWS,
     setTimer,
     getUserPaused,
-    setUserPaused
+    setUserPaused,
+    cancelTimer,
+    getGameJWTFromRedis
 }
