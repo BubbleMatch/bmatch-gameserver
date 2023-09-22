@@ -28,8 +28,7 @@ const {
 } = require("../utils/getLobbyData");
 const {performBotActions} = require("../gameLogic/pseudoRandomBotLogic");
 const {handleUserAuthentication} = require("../utils/userAuth");
-const {setStatusById} = require("../utils/getPostgresqlUserData");
-const {getPostgresConfig} = require("../config/config");
+const {endGame} = require("../utils/endGameHandler");
 
 async function setupRabbitMQ(rabbitMQChannel) {
     const exchangeName = "game_events";
@@ -103,7 +102,7 @@ async function listenForExpiredMessages(io, redisClient, rabbitMQChannel, consul
             await setPaused(redisClient, gameUUID, 'true');
             await performBotActions(io, redisClient, consul, {
                 gameUUID: gameUUID
-            });
+            }, rabbitMQChannel);
             await setPaused(redisClient, gameUUID, 'false');
 
             nextPlayer = await getCurrentGamePlayer(redisClient, gameUUID);
@@ -317,7 +316,7 @@ function openedBubble(io, socket, consul, redisClient, rabbitMQChannel) {
             if (nextPlayer.type === "Bot") {
                 await cancelTimer(redisClient, rabbitMQChannel, data.gameUUID)
                 await setPaused(redisClient, data.gameUUID, 'true');
-                await performBotActions(io, redisClient, consul, data);
+                await performBotActions(io, redisClient, consul, data, rabbitMQChannel);
                 await setPaused(redisClient, data.gameUUID, 'false');
 
                 nextPlayer = await getCurrentGamePlayer(redisClient, data.gameUUID);
@@ -340,18 +339,7 @@ function openedBubble(io, socket, consul, redisClient, rabbitMQChannel) {
     })
 }
 
-async function endGame(io, redisClient, rabbitMQChannel, consul, gameUUID) {
-    await setPaused(redisClient, gameUUID, 'true');
-    io.to(gameUUID).emit('gameOver');
-    await cancelTimer(rabbitMQChannel, gameUUID);
 
-    let userJWTs = await getGameJWTFromRedis(redisClient, gameUUID);
-    let cfg = await getPostgresConfig();
-    for (const userJWT in userJWTs) {
-        let currentUser = await extractAndVerifyJWT(userJWT, consul, redisClient);
-        await setStatusById(currentUser.id, "REGISTERED", cfg);
-    }
-}
 
 function chatMessage(io, socket, consul, redisClient) {
     socket.on("chatMessage", async (data) => {

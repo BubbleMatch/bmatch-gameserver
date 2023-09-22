@@ -69,8 +69,7 @@ function join(io, socket, consul, redisClient) {
 
             if (currentStatus === "IN_GAME") {
                 let userData = await getUserJWTCache(redisClient, data.token);
-                // TODO: uncomment
-             //   throw new Error(`The user is already in Game: ${userData.UUID}`);
+                throw new Error(`The user is already in Game: ${userData.UUID}`);
             }
 
             const existingPlayerIndex = lobbyData.players.findIndex(player => player.id === currentUser.id);

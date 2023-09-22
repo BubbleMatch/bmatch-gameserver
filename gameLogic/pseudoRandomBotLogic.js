@@ -13,6 +13,7 @@ const {
     setAction,
     setNextPlayer, cancelTimer, setTimer
 } = require("../utils/getGameData");
+const {endGame} = require("../utils/endGameHandler");
 
 function pseudoRandomChoice(lastSuccessfulAttempt) {
     const C = 0.05;
@@ -63,7 +64,7 @@ function randomSleep(min, max) {
     return new Promise(resolve => setTimeout(resolve, Math.random() * (max - min) + min));
 }
 
-async function performBotActions(io, redisClient, consul, data) {
+async function performBotActions(io, redisClient, consul, data, rabbitMQChannel) {
     let nextPlayer = await getCurrentGamePlayer(redisClient, data.gameUUID);
 
     while (nextPlayer.type === "Bot") {
@@ -98,7 +99,7 @@ async function performBotActions(io, redisClient, consul, data) {
 
         if (botLastAction && botLastAction.openBubbles.length === 100) {
             await setPaused(redisClient, data.gameUUID, 'true');
-            io.to(data.gameUUID).emit('gameOver');
+            await endGame(io, redisClient, rabbitMQChannel, consul, data.gameUUID);
             return;
         }
 
