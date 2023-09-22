@@ -62,7 +62,6 @@ async function emitPlayerListToLobby(io, redisClient, lobbyID) {
 
 function emitSystemMessage(io, socket, message) {
     const data = JSON.stringify({message});
-    console.log(data);
     io.to(socket.id).emit("systemMessage", data);
 }
 
