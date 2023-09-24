@@ -14,8 +14,10 @@ async function startGameServer(app, options, consul, redisClient, rabbitMQChanne
         : http.createServer(app);
 
     const io = new Server(server, {
+        path: "/socket.io",
         cors: {
-            origin: '*'
+            origin: '*',
+            methods: ["GET", "POST"]
         }
     });
 
