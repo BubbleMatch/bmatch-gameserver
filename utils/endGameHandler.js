@@ -9,8 +9,13 @@ async function endGame(io, redisClient, rabbitMQChannel, consul, gameUUID) {
     await cancelTimer(redisClient, rabbitMQChannel, gameUUID);
 
     let userJWTs = await getGameJWTFromRedis(redisClient, gameUUID);
-    let cfg = await getPostgresConfig();
-    for (const userJWT in userJWTs) {
+    await processJWTs(userJWTs, consul, redisClient);
+}
+
+async function processJWTs(userJWTs, consul, redisClient) {
+    let cfg = await getPostgresConfig(consul);
+
+    for (let userJWT of userJWTs) {
         let currentUser = await extractAndVerifyJWT(userJWT, consul, redisClient);
         await setStatusById(currentUser.id, "REGISTERED", cfg);
     }
